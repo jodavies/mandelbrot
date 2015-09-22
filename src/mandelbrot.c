@@ -23,6 +23,16 @@ void RenderMandelbrotCPU(float *image, const int xRes, const int yRes,
 void ApplyZoom(const int xRes, const int yRes, const double xCursor, const double yCursor,
                double * xMin, double * xMax, double * yMin, double * yMax, const double scaleFac);
 
+// Test fps for a particular range/zoom, render at least 10 frames or run for 1 second
+void RunBenchmark(GLFWwindow *window, float *image, const int xRes, const int yRes,
+                      const double xMin, const double xMax, const double yMin, const double yMax,
+                      const int maxIters);
+
+// Set initial values for render ranges, number of iterations. This is a function as it is called
+// in more than one place.
+void SetInitialValues(double *xMin, double *xMax, double *yMin, double *yMax, int *maxIters,
+                      const int xRes, const int yRes);
+
 void WriteImageToFile(float *image, const int xRes, const int yRes);
 
 int SetUpOpenGL(GLFWwindow **window, const int xRes, const int yRes,
@@ -38,15 +48,11 @@ int main(void)
 	const int xRes = 1920;
 	const int yRes = 1080;
 
-	// max iteration count. This needs to increase as we zoom in to maintain detail
-	int maxIters = 50;
-
-	// mandelbrot coordinates
-	double xMin = -2.5;
-	double xMax =  1.5;
-	// set y limits based on aspect ratio
-	double yMin = -(xMax-xMin)/2.0*((double)yRes/(double)xRes);
-	double yMax =  (xMax-xMin)/2.0*((double)yRes/(double)xRes);
+	// boudary variables and max iteration count
+	double xMin, xMax, yMin, yMax;
+	int maxIters;
+	SetInitialValues(&xMin, &xMax, &yMin, &yMax, &maxIters, xRes, yRes);
+	printf("Initial Boundaries: %lf,%lf,  %lf,%lf\n", xMin,xMax, yMin,yMax);
 
 	// Allocate array of floats which represent the pixels. 3 floats per pixel for RGB.
 	float *image;
@@ -90,11 +96,13 @@ int main(void)
 
 		// if user left-clicks in window, zoom in, centering on cursor position
 		else if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
+			printf("Zooming in...\n");
 			// Get cursor position, in *screen coordinates*
 			double xCursorPos, yCursorPos;
 			glfwGetCursorPos(window, &xCursorPos, &yCursorPos);
 			// Adjust mandelbrot coordinate boundaries
 			ApplyZoom(xRes, yRes, xCursorPos, yCursorPos, &xMin, &xMax, &yMin, &yMax, 2.0);
+			printf("New Boundaries: %lf,%lf,  %lf,%lf, iters: %d\n", xMin,xMax, yMin,yMax, maxIters);
 			// Increase iteration count to maintain detail
 			maxIters = (int)(maxIters*1.25);
 			// Recompute mandelbrot
@@ -104,13 +112,16 @@ int main(void)
 
 		// if user right-clicks in window, zoom out, centering on cursor position
 		else if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
+			printf("Zooming out...\n");
 			// Get cursor position, in *screen coordinates*
 			double xCursorPos, yCursorPos;
 			glfwGetCursorPos(window, &xCursorPos, &yCursorPos);
 			// Adjust mandelbrot coordinate boundaries
 			ApplyZoom(xRes, yRes, xCursorPos, yCursorPos, &xMin, &xMax, &yMin, &yMax, 0.5);
+			printf("New Boundaries: %lf,%lf,  %lf,%lf, iters: %d\n", xMin,xMax, yMin,yMax, maxIters);
 			// Decrease iteration count to maintain performance
 			maxIters = (int)(maxIters/1.25);
+			if (maxIters < 50) maxIters = 50;
 			// Recompute mandelbrot
 			RenderMandelbrotCPU(image, xRes, yRes, xMin, xMax, yMin, yMax, maxIters);
 			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, xRes, yRes, 0, GL_RGB, GL_FLOAT, image);
@@ -118,16 +129,30 @@ int main(void)
 
 		// if user presses "r", reset view
 		else if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS) {
-			maxIters = 50;
-			double xMin = -2.5;
-			double xMax =  1.5;
-			// set y limits based on aspect ratio
-			double yMin = -(xMax-xMin)/2.0*((double)yRes/(double)xRes);
-			double yMax =  (xMax-xMin)/2.0*((double)yRes/(double)xRes);
+			printf("Resetting...\n");
+			SetInitialValues(&xMin, &xMax, &yMin, &yMax, &maxIters, xRes, yRes);
 			// Recompute mandelbrot
 			RenderMandelbrotCPU(image, xRes, yRes, xMin, xMax, yMin, yMax, maxIters);
 			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, xRes, yRes, 0, GL_RGB, GL_FLOAT, image);
 		}
+
+		// if user presses "b", run some benchmarks.
+		// TODO: pick good regions. One that shows effect of cardioid detection (depends heavily on maxIters,
+		// one highly zoomed, high maxIters on a hard-to-draw region.
+		else if (glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS) {
+			printf("Running Benchmarks...\n");
+			printf("Whole fractal:\n");
+			RunBenchmark(window, image, xRes, yRes, -2.5, 1.5, -1.125, 1.125, 50);
+			printf("Half cardioid:\n");
+			RunBenchmark(window, image, xRes, yRes, -1.5, 0.25, -0.6, 0.6, 50);
+			printf("Highly zoomed:\n");
+			printf("Complete.\n");
+
+			// Re-render previous view
+			RenderMandelbrotCPU(image, xRes, yRes, xMin, xMax, yMin, yMax, maxIters);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, xRes, yRes, 0, GL_RGB, GL_FLOAT, image);
+		}
+
 	}
 
 
@@ -207,7 +232,7 @@ void RenderMandelbrotCPU(float *image, const int xRes, const int yRes,
 		}
 	}
 
-//	printf("Frametime: %lf s\n", GetWallTime() - startTime);
+	printf("Frametime: %lf s\n", GetWallTime() - startTime);
 }
 
 
@@ -227,6 +252,30 @@ void ApplyZoom(const int xRes, const int yRes, const double xCursorPos, const do
 	*xMin = xCursorCoord - xWidth/2.0/scaleFac;
 	*yMax = yCursorCoord + yWidth/2.0/scaleFac;
 	*yMin = yCursorCoord - yWidth/2.0/scaleFac;
+}
+
+
+
+void RunBenchmark(GLFWwindow *window, float *image, const int xRes, const int yRes,
+                      const double xMin, const double xMax, const double yMin, const double yMax,
+                      const int maxIters)
+{
+	double startTime = GetWallTime();
+	int framesRendered = 0;
+
+	while ( (framesRendered < 10) || (GetWallTime() - startTime < 1.0) ) {
+
+		RenderMandelbrotCPU(image, xRes, yRes, xMin, xMax, yMin, yMax, maxIters);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, xRes, yRes, 0, GL_RGB, GL_FLOAT, image);
+		// draw
+		glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+		// Swap buffers
+		glfwSwapBuffers(window);
+		framesRendered++;
+	}
+
+	double fps = (double)framesRendered/(GetWallTime()-startTime);
+	printf("       fps: %lf\n", fps);
 }
 
 
@@ -290,13 +339,13 @@ int SetUpOpenGL(GLFWwindow **window, const int xRes, const int yRes,
 	glBufferData(GL_ARRAY_BUFFER, sizeof(rectangleVertices), rectangleVertices, GL_STATIC_DRAW);
 
 	// rectangle formed of two triangles, use ebo to re-use vertices
-    glGenBuffers(1, ebo);
-    GLuint elements[] = {
-        0, 1, 2,
-        2, 3, 0
-    };
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, *ebo);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(elements), elements, GL_STATIC_DRAW);
+	glGenBuffers(1, ebo);
+	GLuint elements[] = {
+		0, 1, 2,
+	2, 3, 0
+	};
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, *ebo);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(elements), elements, GL_STATIC_DRAW);
 
 
 	// define and compile shaders
@@ -361,6 +410,22 @@ void WriteImageToFile(float *image, const int xRes, const int yRes)
 		fprintf(fp, "\n");
 	}
 	fclose(fp);
+}
+
+
+
+void SetInitialValues(double *xMin, double *xMax, double *yMin, double *yMax, int *maxIters,
+                      const int xRes, const int yRes)
+{
+	// max iteration count. This needs to increase as we zoom in to maintain detail
+	*maxIters = 50;
+
+	// mandelbrot coordinates
+	*xMin = -2.5;
+	*xMax =  1.5;
+	// set y limits based on aspect ratio
+	*yMin = -(*xMax-*xMin)/2.0*((double)yRes/(double)xRes);
+	*yMax =  (*xMax-*xMin)/2.0*((double)yRes/(double)xRes);
 }
 
 
