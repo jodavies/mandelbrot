@@ -1,50 +1,6 @@
 #include "mandelbrot.h"
 
 
-void SetPixelColour(const int iter, const int maxIters, float mag, float *r, float *g, float *b)
-{
-	// If pixel hit max iteration count, make it black
-	if (iter == maxIters) {
-		*r = 0.0;
-		*g = 0.0;
-		*b = 0.0;
-		return;
-	}
-	// For non-black pixels, define a smoothed iteration count using the final
-	// magnitude (passed in as argument).
-	// This is > 2, unless the pixel hit the max iteration count, handled above.
-	// We subtract a very slowely growing function of the magnitude, so very
-	// quickly diverging pixels look as if they diverged slightly (1, 2 iterations?)
-	// earlier than their iteration count suggests.
-	// Then compute its mod with a number of colour steps, so that it cycles
-	// through the gradient repeatedly, and scale it between 0 and 1.
-	float smooth = fmod((iter -log(log(mag)/log(2.0f))),NCOLOURS)/NCOLOURS;
-
-	if (smooth < 0.25) {
-		*r = 0.0;
-		*g = 0.5*smooth*4.0;
-		*b = 1.0*smooth*4.0;
-	}
-	else if (smooth < 0.5) {
-		*r = 1.0*(smooth-0.25)*4.0;
-		*g = 0.5 + 0.5*(smooth-0.25)*4.0;
-		*b = 1.0;
-	}
-	else if (smooth < 0.75) {
-		*r = 1.0;
-		*g = 1.0 - 0.5*(smooth-0.5)*4.0;
-		*b = 1.0 - (smooth-0.5)*4.0;
-	}
-	else {
-		*r = (1.0-(smooth-0.75)*4.0);
-		*g = 0.5*(1.0-(smooth-0.75)*4.0);
-		*b = 0.0;
-	}
-
-}
-
-
-
 void RenderMandelbrotCPU(float *image, const int xRes, const int yRes,
                       const double xMin, const double xMax, const double yMin, const double yMax,
                       const int maxIters)
@@ -62,7 +18,7 @@ void RenderMandelbrotCPU(float *image, const int xRes, const int yRes,
 		for (int x = 0; x < xRes; x++) {
 
 			int iter = 0;
-			double u = 0.0, v = 0.0, uNew, vNew;
+			double u = 0.0, v = 0.0, uNew;
 			const double xPix = ((double)x/(double)xRes);
 			const double yPix = ((double)y/(double)yRes);
 			const double Rec = (1.0-xPix)*xMin + xPix*xMax;
@@ -81,16 +37,45 @@ void RenderMandelbrotCPU(float *image, const int xRes, const int yRes,
 			double vSq = v*v;
 			while ( (uSq+vSq) <= 4.0 && iter < maxIters) {
 				uNew = uSq-vSq + Rec;
-				uSq = uNew*uNew;
-				vNew = 2.0*u*v + Imc;
-				vSq = vNew*vNew;
+				v = 2*u*v + Imc;
 				u = uNew;
-				v = vNew;
+				uSq = u*u;
+				vSq = v*v;
 				iter++;
 			}
 
-			SetPixelColour(iter, maxIters, uSq+vSq,
-			               &(image[y*xRes*3+x*3+0]),&(image[y*xRes*3+x*3+1]),&(image[y*xRes*3+x*3+2]));
+
+			// colouring
+			if (iter == maxIters ) {
+				// set pixel to be black
+				image[y*xRes*3 + x*3 + 0] = 0.0;
+				image[y*xRes*3 + x*3 + 1] = 0.0;
+				image[y*xRes*3 + x*3 + 2] = 0.0;
+			}
+			else {
+				// set pixel colour
+				float smooth = fmod((iter -log(log(u*u+v*v)/log(2.0f))),128.0)/128.0;
+				if (smooth < 0.25) {
+					image[y*xRes*3 + x*3 + 0] = 0.0;
+					image[y*xRes*3 + x*3 + 1] = 0.5*smooth*4.0;
+					image[y*xRes*3 + x*3 + 2] = 1.0*smooth*4.0;
+				}
+				else if (smooth < 0.5) {
+					image[y*xRes*3 + x*3 + 0] = 1.0*(smooth-0.25)*4.0;
+					image[y*xRes*3 + x*3 + 1] = 0.5 + 0.5*(smooth-0.25)*4.0;
+					image[y*xRes*3 + x*3 + 2] = 1.0;
+				}
+				else if (smooth < 0.75) {
+					image[y*xRes*3 + x*3 + 0] = 1.0;
+					image[y*xRes*3 + x*3 + 1] = 1.0 - 0.5*(smooth-0.5)*4.0;
+					image[y*xRes*3 + x*3 + 2] = 1.0 - (smooth-0.5)*4.0;
+				}
+				else {
+					image[y*xRes*3 + x*3 + 0] = (1.0-(smooth-0.75)*4.0);
+					image[y*xRes*3 + x*3 + 1] = 0.5*(1.0-(smooth-0.75)*4.0);
+					image[y*xRes*3 + x*3 + 2] = 0.0;
+				}
+			}
 
 		}
 	}
@@ -101,9 +86,8 @@ void RenderMandelbrotCPU(float *image, const int xRes, const int yRes,
 
 
 
-// Routine using GMP library for high precision. High precision variables have prefix "m".
-void RenderMandelbrotGMPCPU(float *image, const int xRes, const int yRes,
-                      const double xMin, const double xMax, const double yMin, const double yMax,
+void RenderMandelbrotGMPCPU(float *image, const int xResIn, const int yResIn,
+                      const double xMinIn, const double xMaxIn, const double yMinIn, const double yMaxIn,
                       const int maxIters)
 {
 	double startTime = GetWallTime();
@@ -112,137 +96,147 @@ void RenderMandelbrotGMPCPU(float *image, const int xRes, const int yRes,
 	// 256 bit floats
 	mpf_set_default_prec(256);
 
-	// x,y loop invariant:
-	mpf_t mtwo, mfour;
-	mpf_init_set_ui(mtwo, (unsigned long)2);
-	mpf_init_set_ui(mfour, (unsigned long)4);
-	mpf_t mxMin, mxMax, myMin, myMax;
-	mpf_init_set_d(mxMin, xMin);
-	mpf_init_set_d(mxMax, xMax);
-	mpf_init_set_d(myMin, yMin);
-	mpf_init_set_d(myMax, yMax);
-	mpf_t mxRes, myRes;
-	mpf_init_set_si(mxRes, xRes);
-	mpf_init_set_si(myRes, yRes);
-
-
 	// For each pixel, iterate and store the iteration number when |z|>2 or maxIters
-	#pragma omp parallel for default(none) shared(image,mtwo,mfour,mxMin,mxMax,myMin,myMax,mxRes,myRes) schedule(dynamic)
-	for (int y = 0; y < yRes; y++) {
-
-		// x loop invariant
-		mpf_t myPix;
-		mpf_init(myPix);
-		mpf_ui_div(myPix, (unsigned long)y, myRes);
-
-		// init x-dependent mpf_t here, set inside loop
-		mpf_t mu, mv, muNew, muSq, mvSq, mmag;
-		mpf_init(mu);
-		mpf_init(mv);
-		mpf_init(muNew);
-		mpf_init(muSq);
-		mpf_init(mvSq);
-		mpf_init(mmag);
-		mpf_t mxPix, mRec, mImc;
-		mpf_init(mxPix);
-		mpf_init(mRec);
-		mpf_init(mImc);
-		mpf_t mxtmp1,mxtmp2;
-		mpf_t mytmp1,mytmp2;
-		mpf_init(mxtmp1);
-		mpf_init(mxtmp2);
-		mpf_init(mytmp1);
-		mpf_init(mytmp2);
-
-
-		for (int x = 0; x < xRes; x++) {
+	#pragma omp parallel for default(none) shared(image) schedule(dynamic)
+	for (int y = 0; y < yResIn; y++) {
+		for (int x = 0; x < xResIn; x++) {
 
 			int iter = 0;
+			mpf_t u, v, uNew, uSq, vSq, mag, two, four;
+			mpf_init(u);
+			mpf_init(v);
+			mpf_init(uNew);
+			mpf_init(uSq);
+			mpf_init(vSq);
+			mpf_init(mag);
+			mpf_init_set_ui(two, (unsigned long)2);
+			mpf_init_set_ui(four, (unsigned long)4);
 
-			// set mu and mv to zero initially
-			unsigned long zero = 0;
-			mpf_set_ui(mu, zero);
-			mpf_set_ui(mv, zero);
+			mpf_t xPix, yPix, xRes, yRes, Rec, Imc;
+			mpf_init(xPix);
+			mpf_init(yPix);
+			mpf_init_set_si(xRes, xResIn);
+			mpf_init_set_si(yRes, yResIn);
+			mpf_init(Rec);
+			mpf_init(Imc);
 
-			mpf_ui_div(mxPix, (unsigned long)x, mxRes);
+			mpf_t xMin, xMax, yMin, yMax;
+			mpf_init_set_d(xMin, xMinIn);
+			mpf_init_set_d(xMax, xMaxIn);
+			mpf_init_set_d(yMin, yMinIn);
+			mpf_init_set_d(yMax, yMaxIn);
 
-			mpf_ui_sub(mxtmp1, 1, mxPix); // xtmp1 = 1-xPix
-			mpf_ui_sub(mytmp1, 1, myPix); // ytmp1 = 1-yPix
+			mpf_t xtmp1,xtmp2;
+			mpf_t ytmp1,ytmp2;
+			mpf_init(xtmp1);
+			mpf_init(xtmp2);
+			mpf_init(ytmp1);
+			mpf_init(ytmp2);
 
-			mpf_mul(mxtmp2, mxtmp1, mxMin); // xtmp2 = (1-xPix)*xMin
-			mpf_mul(mytmp2, mytmp1, myMin); // ytmp2 = (1-yPix)*yMin
+			mpf_ui_div(xPix, (unsigned long)x, xRes);
+			mpf_ui_div(yPix, (unsigned long)y, yRes);
 
-			mpf_mul(mxtmp1, mxPix, mxMax); // xtmp1 = xPix*xMax
-			mpf_mul(mytmp1, myPix, myMax); // ytmp1 = yPix*yMax
+			mpf_ui_sub(xtmp1, 1, xPix); // xtmp1 = 1-xPix
+			mpf_ui_sub(ytmp1, 1, yPix); // ytmp1 = 1-yPix
 
-			mpf_add(mRec, mxtmp1, mxtmp2);
-			mpf_add(mImc, mytmp1, mytmp2); // all tmp vars available
+			mpf_mul(xtmp2, xtmp1, xMin); // xtmp2 = (1-xPix)*xMin
+			mpf_mul(ytmp2, ytmp1, yMin); // ytmp2 = (1-yPix)*yMin
+
+			mpf_mul(xtmp1, xPix, xMax); // xtmp1 = xPix*xMax
+			mpf_mul(ytmp1, yPix, yMax); // ytmp1 = yPix*yMax
+
+			mpf_add(Rec, xtmp1, xtmp2);
+			mpf_add(Imc, ytmp1, ytmp2);
 
 
 
 			// Initial values of squares and magnitude
-			mpf_mul(muSq, mu, mu);
-			mpf_mul(mvSq, mv, mv);
-			mpf_add(mmag, muSq, mvSq);
+			mpf_mul(uSq, u, u);
+			mpf_mul(vSq, v, v);
+			mpf_add(mag, uSq, vSq);
 
-			while ( mpf_cmp(mmag, mfour) <= 0 && iter < maxIters) {
-				mpf_sub(mxtmp1, muSq, mvSq);
-				mpf_add(muNew, mxtmp1, mRec); // uNew = uSq - vSq + Rec
+			while ( mpf_cmp(mag, four) <= 0 && iter < maxIters) {
+				mpf_sub(xtmp1, uSq, vSq);
+				mpf_add(uNew, xtmp1, Rec); // uNew = uSq - vSq + Rec
 
-				mpf_mul(mytmp1, mtwo, mu);
-				mpf_mul(mytmp2, mytmp1, mv);
-				mpf_add(mv, mytmp2, mImc); // v = 2*u*v + Imc
+				mpf_mul(ytmp1, two, u);
+				mpf_mul(ytmp2, ytmp1, v);
+				mpf_add(v, ytmp2, Imc); // v = 2*u*v + Imc
 
-				mpf_set(mu, muNew);
+				mpf_set(u, uNew);
 
 				// update squares and magnitude
-				mpf_mul(muSq, mu, mu);
-				mpf_mul(mvSq, mv, mv);
-				mpf_add(mmag, muSq, mvSq);
+				mpf_mul(uSq, u, u);
+				mpf_mul(vSq, v, v);
+				mpf_add(mag, uSq, vSq);
 
 				iter++;
 			}
 
-			SetPixelColour(iter, maxIters, (float)mpf_get_d(mmag),
-			               &(image[y*xRes*3+x*3+0]),&(image[y*xRes*3+x*3+1]),&(image[y*xRes*3+x*3+2]));
 
+			// colouring
+			if (iter == maxIters ) {
+				// set pixel to be black
+				image[y*xResIn*3 + x*3 + 0] = 0.0;
+				image[y*xResIn*3 + x*3 + 1] = 0.0;
+				image[y*xResIn*3 + x*3 + 2] = 0.0;
+			}
+			else {
+				// set pixel colour
+				float smooth = fmod((iter -log(log(mpf_get_d(mag))/log(2.0f))),128.0)/128.0;
+				if (smooth < 0.25) {
+					image[y*xResIn*3 + x*3 + 0] = 0.0;
+					image[y*xResIn*3 + x*3 + 1] = 0.5*smooth*4.0;
+					image[y*xResIn*3 + x*3 + 2] = 1.0*smooth*4.0;
+				}
+				else if (smooth < 0.5) {
+					image[y*xResIn*3 + x*3 + 0] = 1.0*(smooth-0.25)*4.0;
+					image[y*xResIn*3 + x*3 + 1] = 0.5 + 0.5*(smooth-0.25)*4.0;
+					image[y*xResIn*3 + x*3 + 2] = 1.0;
+				}
+				else if (smooth < 0.75) {
+					image[y*xResIn*3 + x*3 + 0] = 1.0;
+					image[y*xResIn*3 + x*3 + 1] = 1.0 - 0.5*(smooth-0.5)*4.0;
+					image[y*xResIn*3 + x*3 + 2] = 1.0 - (smooth-0.5)*4.0;
+				}
+				else {
+					image[y*xResIn*3 + x*3 + 0] = (1.0-(smooth-0.75)*4.0);
+					image[y*xResIn*3 + x*3 + 1] = 0.5*(1.0-(smooth-0.75)*4.0);
+					image[y*xResIn*3 + x*3 + 2] = 0.0;
+				}
+			}
+
+			// Clear mpf variables to free memory
+			mpf_clear(u);
+			mpf_clear(v);
+			mpf_clear(uNew);
+			mpf_clear(uSq);
+			mpf_clear(vSq);
+			mpf_clear(mag);
+			mpf_clear(two);
+			mpf_clear(four);
+
+			mpf_clear(xPix);
+			mpf_clear(yPix);
+			mpf_clear(xRes);
+			mpf_clear(yRes);
+			mpf_clear(Rec);
+			mpf_clear(Imc);
+
+			mpf_clear(xMin);
+			mpf_clear(xMax);
+			mpf_clear(yMin);
+			mpf_clear(yMax);
+
+			mpf_clear(xtmp1);
+			mpf_clear(xtmp2);
+			mpf_clear(ytmp1);
+			mpf_clear(ytmp2);
 
 		}
-
-		// Clear mpf variables to free memory
-		// x loop invariant
-		mpf_clear(myPix);
-
-		// x-dependent, init, clear outside loop
-		mpf_clear(mu);
-		mpf_clear(mv);
-		mpf_clear(muNew);
-		mpf_clear(muSq);
-		mpf_clear(mvSq);
-		mpf_clear(mmag);
-		mpf_clear(mxPix);
-		mpf_clear(mRec);
-		mpf_clear(mImc);
-		mpf_clear(mxtmp1);
-		mpf_clear(mxtmp2);
-		mpf_clear(mytmp1);
-		mpf_clear(mytmp2);
-
 	}
-
-	// x,y loop invariant
-	mpf_clear(mtwo);
-	mpf_clear(mfour);
-	mpf_clear(mxMin);
-	mpf_clear(mxMax);
-	mpf_clear(myMin);
-	mpf_clear(myMax);
-	mpf_clear(mxRes);
-	mpf_clear(myRes);
-
-
 #ifdef GAUSSIANBLUR
-	GaussianBlur(image, xRes, yRes);
+	GaussianBlur(image, xResIn, yResIn);
 #endif
 }
 
@@ -255,7 +249,7 @@ void RenderMandelbrotAVXCPU(float *image, const int xRes, const int yRes,
 	double startTime = GetWallTime();
 
 	if (xMin == ((1.0-(1.0/(double)xRes))*xMin + (1.0-(1.0/(double)xRes))*xMax)
-	 || yMin == ((1.0-(1.0/(double)yRes))*yMin + (1.0-(1.0/(double)yRes))*yMax)) {
+	 || yMin == ((1.0-(1.0/(double)yRes))*yMin + (1.0-(1.0/(double)xRes))*yMax)) {
 		printf("PRECISION WARNING!\n");
 	}
 
@@ -344,12 +338,42 @@ void RenderMandelbrotAVXCPU(float *image, const int xRes, const int yRes,
 				}
 
 			}
-			// Compute final magnitude for smooth colouring function
-			__m256d vmagnitudeFinal = _mm256_add_pd(_mm256_mul_pd(vuFinal,vuFinal), _mm256_mul_pd(vvFinal,vvFinal));
 
+
+			// colouring
 			for (int k = 0; k < 4; k++) {
-				SetPixelColour((int)(((double*)&viter)[k]), maxIters, ((double*)&vmagnitudeFinal)[k],
-							&(image[y*xRes*3+(x+k)*3+0]),&(image[y*xRes*3+(x+k)*3+1]),&(image[y*xRes*3+(x+k)*3+2]));
+				if ( (int)(((double*)&viter)[k]) == maxIters ) {
+					// set pixel to be black
+					image[y*xRes*3 + (x+k)*3 + 0] = 0.0;
+					image[y*xRes*3 + (x+k)*3 + 1] = 0.0;
+					image[y*xRes*3 + (x+k)*3 + 2] = 0.0;
+				}
+				else {
+					// set pixel colour
+					double u = ((double*)&vuFinal)[k];
+					double v = ((double*)&vvFinal)[k];
+					float smooth = fmod( ((double*)&viter)[k] -log(log(u*u+v*v)/log(2.0f)), 128.0)/128.0;
+					if (smooth < 0.25) {
+						image[y*xRes*3 + (x+k)*3 + 0] = 0.0;
+						image[y*xRes*3 + (x+k)*3 + 1] = 0.5*smooth*4.0;
+						image[y*xRes*3 + (x+k)*3 + 2] = 1.0*smooth*4.0;
+					}
+					else if (smooth < 0.5) {
+						image[y*xRes*3 + (x+k)*3 + 0] = 1.0*(smooth-0.25)*4.0;
+						image[y*xRes*3 + (x+k)*3 + 1] = 0.5 + 0.5*(smooth-0.25)*4.0;
+						image[y*xRes*3 + (x+k)*3 + 2] = 1.0;
+					}
+					else if (smooth < 0.75) {
+						image[y*xRes*3 + (x+k)*3 + 0] = 1.0;
+						image[y*xRes*3 + (x+k)*3 + 1] = 1.0 - 0.5*(smooth-0.5)*4.0;
+						image[y*xRes*3 + (x+k)*3 + 2] = 1.0 - (smooth-0.5)*4.0;
+					}
+					else {
+						image[y*xRes*3 + (x+k)*3 + 0] = (1.0-(smooth-0.75)*4.0);
+						image[y*xRes*3 + (x+k)*3 + 1] = 0.5*(1.0-(smooth-0.75)*4.0);
+						image[y*xRes*3 + (x+k)*3 + 2] = 0.0;
+					}
+				}
 			}
 
 		}

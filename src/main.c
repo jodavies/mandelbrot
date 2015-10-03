@@ -62,6 +62,7 @@ int main(void)
 	float *image;
 	image = malloc(xRes * yRes * sizeof *image *3);
 
+
 	// OpenGL variables and setup
 	GLFWwindow *window = NULL;
 	GLuint vertexShader, fragmentShader, shaderProgram;

@@ -7,6 +7,9 @@
 // Optional Gaussian blur after computation, can look "nicer"
 #define GAUSSIANBLUR
 
+// Number of colour steps
+#define NCOLOURS 128
+
 
 // Includes
 #include <stdio.h>
@@ -16,6 +19,10 @@
 
 #include "GaussianBlur.h"
 #include "GetWallTime.h"
+
+
+// Set pixels in r,g,b pointers based on final iteration value
+void SetPixelColour(const int iter, const int maxIters, float mag, float *r, float *g, float *b);
 
 
 // Basic routine, using CPU.
