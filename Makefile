@@ -1,6 +1,6 @@
 all:
 	mkdir -p bin
-	gcc -o bin/mandelbrot src/*.c -std=gnu99 -O3 -march=core-avx-i -fno-unsafe-math-optimizations -fopenmp -lgmp -lrt -lglfw -lGL -lm -lXrandr -lXi -lX11 -lXxf86vm -lpthread -lGLEW -Wall -pedantic -g
+	gcc -o bin/mandelbrot src/*.c -std=gnu99 -O3 -march=core-avx-i -fno-unsafe-math-optimizations -fopenmp -lgmp -lrt -lglfw -lGL -lm -lXrandr -lXi -lX11 -lXxf86vm -lpthread -lGLEW -lOpenCL -Wall -pedantic -g
 #	icc -o bin/mandelbrot-icc src/*.c -std=gnu99 -O3 -xAVX -fp-model=precise -openmp -lgmp -lrt -lglfw -lGL -lm -lXrandr -lXi -lX11 -lXxf86vm -lpthread -lGLEW -Wall -pedantic -g
 
 debug:

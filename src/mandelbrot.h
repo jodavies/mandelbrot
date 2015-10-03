@@ -17,6 +17,12 @@
 #include <gmp.h>
 #include <immintrin.h>
 
+#define GLEW_STATIC
+#include <GL/glew.h>
+
+#include <CL/opencl.h>
+#include <CL/cl_gl.h>
+
 #include "GaussianBlur.h"
 #include "GetWallTime.h"
 
@@ -39,3 +45,10 @@ void RenderMandelbrotGMPCPU(float *image, const int xRes, const int yRes,
 void RenderMandelbrotAVXCPU(float *image, const int xRes, const int yRes,
                       const double xMin, const double xMax, const double yMin, const double yMax,
                       const int maxIters);
+
+// OpenCL. Sets kernel arguments, acquires opengl texture, runs kernel, releases texture
+void RenderMandelbrotOpenCL(const int xRes, const int yRes,
+                      const double xMin, const double xMax, const double yMin, const double yMax,
+                      const int maxIters,
+                      cl_command_queue *queue, cl_kernel *renderMandelbrotKernel, cl_mem *pixelsImage,
+                      size_t *globalSize, size_t *localSize);

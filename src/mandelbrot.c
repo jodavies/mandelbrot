@@ -358,3 +358,33 @@ void RenderMandelbrotAVXCPU(float *image, const int xRes, const int yRes,
 	GaussianBlur(image, xRes, yRes);
 #endif
 }
+
+
+
+void RenderMandelbrotOpenCL(const int xRes, const int yRes,
+                      const double xMin, const double xMax, const double yMin, const double yMax,
+                      const int maxIters,
+                      cl_command_queue *queue, cl_kernel *renderMandelbrotKernel, cl_mem *pixelsImage,
+                      size_t *globalSize, size_t *localSize)
+{
+	int err;
+	// Update kernel args
+	err  = clSetKernelArg(*renderMandelbrotKernel, 0, sizeof(cl_mem), pixelsImage);
+	err |= clSetKernelArg(*renderMandelbrotKernel, 1, sizeof(int), &xRes);
+	err |= clSetKernelArg(*renderMandelbrotKernel, 2, sizeof(int), &yRes);
+	err |= clSetKernelArg(*renderMandelbrotKernel, 3, sizeof(double), &xMin);
+	err |= clSetKernelArg(*renderMandelbrotKernel, 4, sizeof(double), &xMax);
+	err |= clSetKernelArg(*renderMandelbrotKernel, 5, sizeof(double), &yMin);
+	err |= clSetKernelArg(*renderMandelbrotKernel, 6, sizeof(double), &yMax);
+	err |= clSetKernelArg(*renderMandelbrotKernel, 7, sizeof(int), &maxIters);
+//	CheckOpenCLError(err, __LINE__);
+
+	glFinish();
+	err = clEnqueueAcquireGLObjects(*queue, 1, pixelsImage, 0, 0, NULL);
+//	CheckOpenCLError(err, __LINE__);
+	err = clEnqueueNDRangeKernel(*queue, *renderMandelbrotKernel, 1, NULL, globalSize, localSize, 0, NULL, NULL);
+//	CheckOpenCLError(err, __LINE__);
+//	clFinish(*queue);
+	err = clEnqueueReleaseGLObjects(*queue, 1, pixelsImage, 0, 0, NULL);
+	clFinish(*queue);
+}
