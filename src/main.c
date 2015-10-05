@@ -3,6 +3,7 @@
 #include <limits.h>
 #include <math.h>
 #include <unistd.h>
+#include <string.h>
 
 // OpenGL
 #define GLEW_STATIC
@@ -362,7 +363,7 @@ int SetUpOpenGL(GLFWwindow **window, const int xRes, const int yRes,
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 	glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
-//	glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
+	glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
 
 	// Create a GFLW window and create its OpenGL context
 	*window = glfwCreateWindow( xRes, yRes, "Mandelbrot Set", NULL, NULL);
@@ -465,8 +466,6 @@ int SetUpOpenGL(GLFWwindow **window, const int xRes, const int yRes,
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	//glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
-	//glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
 
 	return 0;
 }
@@ -544,6 +543,14 @@ int InitialiseCLEnvironment(cl_platform_id **platform, cl_device_id ***device_id
 			char deviceName[200];
 			clGetDeviceInfo((*device_id)[i][j], CL_DEVICE_NAME, sizeof(deviceName), deviceName, NULL);
 			printf("---OpenCL:    Device found %d. %s\n", j, deviceName);
+			char deviceInfo[1024];
+			clGetDeviceInfo((*device_id)[i][j], CL_DEVICE_EXTENSIONS, sizeof(deviceInfo), deviceInfo, NULL);
+			if (strstr(deviceInfo, "cl_khr_gl_sharing") != NULL) {
+				printf("---OpenCL:        cl_khr_gl_sharing supported!\n");
+			}
+			else {
+				printf("---OpenCL:        cl_khr_gl_sharing NOT supported!\n");
+			}
 //			cl_ulong maxAlloc;
 //			clGetDeviceInfo((*device_id)[i][j], CL_DEVICE_MAX_MEM_ALLOC_SIZE, sizeof(maxAlloc), &maxAlloc, NULL);
 //			printf("---OpenCL:       CL_DEVICE_MAX_MEM_ALLOC_SIZE: %lu MB\n", maxAlloc/1024/1024);
@@ -552,56 +559,50 @@ int InitialiseCLEnvironment(cl_platform_id **platform, cl_device_id ***device_id
 //			printf("---OpenCL:       CL_DEVICE_GLOBAL_MEM_CACHELINE_SIZE: %u B\n", cacheLineSize);
 		}
 	}
-
-	// Get platform and device from user:
-	int chosenPlatform = -1, chosenDevice = -1;
-	while (chosenPlatform < 0) {
-		printf("\nChoose a platform: ");
-		scanf("%d", &chosenPlatform);
-		if (chosenPlatform > (numPlatforms-1) || chosenPlatform < 0) {
-			chosenPlatform = -1;
-			printf("Invalid platform.\n");
-		}
-	}
-	while (chosenDevice < 0) {
-		printf("Choose a device: ");
-		scanf("%d", &chosenDevice);
-		if (chosenDevice > (numDevices[chosenPlatform]-1) || chosenDevice < 0) {
-			chosenDevice = -1;
-			printf("Invalid device.\n");
-		}
-	}
 	printf("\n");
-/*
-	//create a context
-	*context = clCreateContext(NULL, 1, &((*device_id)[chosenPlatform][chosenDevice]), NULL, NULL, &err);
-	CheckOpenCLError(err, __LINE__);
-	//create a queue
-	*queue = clCreateCommandQueue(*context, (*device_id)[chosenPlatform][chosenDevice], 0, &err);
-	CheckOpenCLError(err, __LINE__);
-*/
+
 
 	////////////////////////////////
 	// This part is different to how we usually do things. Need to get context and device from existing
-	// OpenGL context.
-//	clGetGLContextInfoKHR = (clGetGLContextInfoKHR_fn)clGetExtensionFunctionAddress("clGetGLContextInfoKHR");
-	clGetGLContextInfoKHR_fn pclGetGLContextInfoKHR = (clGetGLContextInfoKHR_fn) clGetExtensionFunctionAddressForPlatform((*platform)[chosenPlatform], "clGetGLContextInfoKHR");
+	// OpenGL context. Loop through all platforms looking for the device:
+	cl_device_id glDevice;
+	int deviceFound = 0;
+	int checkPlatform = 0;
 
+	while (!deviceFound) {
+		printf("---OpenCL: Looking for OpenGL Context device on platform %d ... ", checkPlatform);
+		clGetGLContextInfoKHR_fn pclGetGLContextInfoKHR = (clGetGLContextInfoKHR_fn) clGetExtensionFunctionAddressForPlatform((*platform)[checkPlatform], "clGetGLContextInfoKHR");
+		cl_context_properties properties[] = {
+			CL_GL_CONTEXT_KHR, (cl_context_properties) glfwGetGLXContext(window),
+			CL_GLX_DISPLAY_KHR, (cl_context_properties) glfwGetX11Display(),
+			CL_CONTEXT_PLATFORM, (cl_context_properties) (*platform)[checkPlatform],
+			0};
+		err = pclGetGLContextInfoKHR(properties, CL_CURRENT_DEVICE_FOR_GL_CONTEXT_KHR, sizeof(cl_device_id), &glDevice, NULL);
+		if (err != CL_SUCCESS) {
+			printf("Not Found.\n");
+			checkPlatform++;
+			if (checkPlatform > numPlatforms-1) {
+				printf("---OpenCL: Error! Could not find OpenGL sharing device.\n");
+				return EXIT_FAILURE;
+			}
+		}
+		else {
+			printf("Found!\n");
+			deviceFound = 1;
+		}
+	}
+
+	clGetGLContextInfoKHR_fn pclGetGLContextInfoKHR = (clGetGLContextInfoKHR_fn) clGetExtensionFunctionAddressForPlatform((*platform)[checkPlatform], "clGetGLContextInfoKHR");
 	cl_context_properties properties[] = {
 		CL_GL_CONTEXT_KHR, (cl_context_properties) glfwGetGLXContext(window),
 		CL_GLX_DISPLAY_KHR, (cl_context_properties) glfwGetX11Display(),
-		CL_CONTEXT_PLATFORM, (cl_context_properties) (*platform)[chosenPlatform],
+		CL_CONTEXT_PLATFORM, (cl_context_properties) (*platform)[checkPlatform],
 		0};
-	cl_device_id glDevice;
-	err = pclGetGLContextInfoKHR(properties, CL_CURRENT_DEVICE_FOR_GL_CONTEXT_KHR, sizeof(cl_device_id), &glDevice, NULL);
-	CheckOpenCLError(err, __LINE__);
 
-//	printf("Creating OpenCL context...\n");
 	*context = clCreateContext(properties, 1, &glDevice, NULL, 0, &err);
 	CheckOpenCLError(err, __LINE__);
 	
 	// create a command queue
-//	printf("Creating OpenCL command queue...\n");
 	*queue = clCreateCommandQueue(*context, glDevice, 0, &err);
 	CheckOpenCLError(err, __LINE__);
 	////////////////////////////////
@@ -617,12 +618,10 @@ int InitialiseCLEnvironment(cl_platform_id **platform, cl_device_id ***device_id
 	}
 
 	//build program executable
-//	printf("Building CL Executable...\n");
 	err = clBuildProgram(*program, 0, NULL, "-I. -I src/", NULL, NULL);
 	if (err != CL_SUCCESS) {
 		printf("Error in clBuildProgram: %d, line %d.\n", err, __LINE__);
 		char buffer[5000];
-//		clGetProgramBuildInfo(*program, (*device_id)[chosenPlatform][chosenDevice], CL_PROGRAM_BUILD_LOG, sizeof(buffer), buffer, NULL);
 		clGetProgramBuildInfo(*program, glDevice, CL_PROGRAM_BUILD_LOG, sizeof(buffer), buffer, NULL);
 		printf("%s\n", buffer);
 		return EXIT_FAILURE;
