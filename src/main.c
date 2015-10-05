@@ -13,8 +13,11 @@
 #include <GLFW/glfw3native.h>
 
 // OpenCL
-#include <CL/opencl.h>
-#include <CL/cl_gl.h>
+#ifdef WITHOPENCL
+	#include <CL/opencl.h>
+	#include <CL/cl_gl.h>
+	#include "CheckOpenCLError.h"
+#endif
 
 
 #include "mandelbrot.h"
@@ -35,6 +38,14 @@ void ApplyZoom(const int xRes, const int yRes, const double xCursor, const doubl
 void RunBenchmark(GLFWwindow *window, RenderMandelbrotPtr RenderMandelbrot, float *image, const int xRes, const int yRes,
                       const double xMin, const double xMax, const double yMin, const double yMax,
                       const int maxIters);
+#ifdef WITHOPENCL
+// OpenCL version requires extra arguments
+void RunBenchmarkOpenCL(GLFWwindow *window, float *image, const int xRes, const int yRes,
+                      const double xMin, const double xMax, const double yMin, const double yMax,
+                      const int maxIters,
+                      cl_command_queue *queue, cl_kernel *renderMandelbrotKernel, cl_mem *pixelsImage,
+                      size_t *globalSize, size_t *localSize);
+#endif
 
 // Set initial values for render ranges, number of iterations. This is a function as it is called
 // in more than one place.
@@ -49,13 +60,13 @@ int SetUpOpenGL(GLFWwindow **window, const int xRes, const int yRes,
                 GLuint *vertexShader, GLuint *fragmentShader, GLuint *shaderProgram,
                 GLuint *vao, GLuint *vbo, GLuint *ebo, GLuint *tex);
 
+#ifdef WITHOPENCL
 // OpenCL Stuff
 int InitialiseCLEnvironment(cl_platform_id**, cl_device_id***, cl_context*, cl_command_queue*, cl_program*, GLFWwindow *window);
 void CleanUpCLEnvironment(cl_platform_id**, cl_device_id***, cl_context*, cl_command_queue*, cl_program*);
-void CheckOpenCLError(cl_int err, int line);
 
 char *kernelFileName = "src/mandelbrotKernel.cl";
-
+#endif
 
 
 int main(void)
@@ -84,6 +95,7 @@ int main(void)
 	SetUpOpenGL(&window, xRes, yRes, &vertexShader, &fragmentShader, &shaderProgram, &vao, &vbo, &ebo, &tex);
 
 
+#ifdef WITHOPENCL
 	// OpenCL variables and setup
 	cl_platform_id    *platform;
 	cl_device_id      **device_id;
@@ -109,20 +121,24 @@ int main(void)
 
 	// Create kernel
 	renderMandelbrotKernel = clCreateKernel(program, "renderMandelbrotKernel", &err);
+#endif
 
 
 	// Start main loop: Update until we encounter user input. Look for Esc key (quit), left and right mount
-	// buttons (zoom in on cursor position, zoom out on cursor position), "r" -- reset back to initial coords etc.
-
-	//Need an initial computation of mandelbrot, and texture update before we enter
-//	RenderMandelbrot(image, xRes, yRes, xMin, xMax, yMin, yMax, maxIters);
-//	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, xRes, yRes, 0, GL_RGB, GL_FLOAT, image);
-	RenderMandelbrotOpenCL(xRes, yRes, xMin, xMax, yMin, yMax, maxIters, &queue, &renderMandelbrotKernel,
-	                       &pixelsImage, &globalSize, &localSize);
-
+	// buttons (zoom in on cursor position, zoom out on cursor position), "r" -- reset back to initial coords,
+	// "b" -- run some benchmarks, "p" -- display a double precision limited zoom.
 
 
 	while (!glfwWindowShouldClose(window)) {
+
+		// render
+#ifdef WITHOPENCL
+		RenderMandelbrotOpenCL(xRes, yRes, xMin, xMax, yMin, yMax, maxIters, &queue, &renderMandelbrotKernel,
+		                       &pixelsImage, &globalSize, &localSize);
+#else
+		RenderMandelbrot(image, xRes, yRes, xMin, xMax, yMin, yMax, maxIters);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, xRes, yRes, 0, GL_RGB, GL_FLOAT, image);
+#endif
 
 		// draw
 		glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
@@ -131,8 +147,11 @@ int main(void)
 		glfwSwapBuffers(window);
 
 
-		// USER INPUT TESTS. Poll for input:
-		glfwPollEvents();
+		// USER INPUT TESTS.
+		// Continuous render, poll for input:
+		//glfwPollEvents();
+		// Render only on update, wait for input:
+		glfwWaitEvents();
 
 		// if user presses Esc, close window to leave loop
 		if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
@@ -141,75 +160,93 @@ int main(void)
 
 		// if user left-clicks in window, zoom in, centering on cursor position
 		else if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
+			while (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) != GLFW_RELEASE) {
+				glfwPollEvents();
+			}
 			printf("Zooming in...\n");
 			// Get cursor position, in *screen coordinates*
 			double xCursorPos, yCursorPos;
 			glfwGetCursorPos(window, &xCursorPos, &yCursorPos);
 			// Adjust mandelbrot coordinate boundaries
 			ApplyZoom(xRes, yRes, xCursorPos, yCursorPos, &xMin, &xMax, &yMin, &yMax, 2.0, &maxIters);
-			// Recompute mandelbrot
-//			RenderMandelbrot(image, xRes, yRes, xMin, xMax, yMin, yMax, maxIters);
-//			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, xRes, yRes, 0, GL_RGB, GL_FLOAT, image);
-			RenderMandelbrotOpenCL(xRes, yRes, xMin, xMax, yMin, yMax, maxIters, &queue, &renderMandelbrotKernel,
-			                       &pixelsImage, &globalSize, &localSize);
 		}
 
 		// if user right-clicks in window, zoom out, centering on cursor position
 		else if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
+			while (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) != GLFW_RELEASE) {
+				glfwPollEvents();
+			}
 			printf("Zooming out...\n");
 			// Get cursor position, in *screen coordinates*
 			double xCursorPos, yCursorPos;
 			glfwGetCursorPos(window, &xCursorPos, &yCursorPos);
 			// Adjust mandelbrot coordinate boundaries
 			ApplyZoom(xRes, yRes, xCursorPos, yCursorPos, &xMin, &xMax, &yMin, &yMax, 0.5, &maxIters);
-			// Recompute mandelbrot
-//			RenderMandelbrot(image, xRes, yRes, xMin, xMax, yMin, yMax, maxIters);
-//			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, xRes, yRes, 0, GL_RGB, GL_FLOAT, image);
-			RenderMandelbrotOpenCL(xRes, yRes, xMin, xMax, yMin, yMax, maxIters, &queue, &renderMandelbrotKernel,
-			                       &pixelsImage, &globalSize, &localSize);
 		}
 
 		// if user presses "r", reset view
 		else if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS) {
+			while (glfwGetKey(window, GLFW_KEY_R) != GLFW_RELEASE) {
+				glfwPollEvents();
+			}
 			printf("Resetting...\n");
 			SetInitialValues(&xMin, &xMax, &yMin, &yMax, &maxIters, xRes, yRes);
-			// Recompute mandelbrot
-//			RenderMandelbrot(image, xRes, yRes, xMin, xMax, yMin, yMax, maxIters);
-//			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, xRes, yRes, 0, GL_RGB, GL_FLOAT, image);
-			RenderMandelbrotOpenCL(xRes, yRes, xMin, xMax, yMin, yMax, maxIters, &queue, &renderMandelbrotKernel,
-			                       &pixelsImage, &globalSize, &localSize);
 		}
 
 		// if user presses "b", run some benchmarks.
 		else if (glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS) {
-			printf("Running Benchmarks...\n");
-			printf("Whole fractal:\n");
-			RunBenchmark(window, RenderMandelbrot, image, xRes, yRes, -2.5, 1.5, -1.125, 1.125, 50);
-			printf("Half cardioid:\n");
-			RunBenchmark(window, RenderMandelbrot, image, xRes, yRes, -1.5, 0.25, -0.6, 0.6, 50);
-			printf("Highly zoomed:\n");
-			RunBenchmark(window, RenderMandelbrot, image, xRes, yRes, -0.67309614449914079,-0.67303510934289079, -0.31334835466695943,-0.31331402239156880, 2000);
-			printf("Complete.\n");
+			while (glfwGetKey(window, GLFW_KEY_B) != GLFW_RELEASE) {
+				glfwPollEvents();
+			}
 
-			// Re-render previous view
-			RenderMandelbrot(image, xRes, yRes, xMin, xMax, yMin, yMax, maxIters);
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, xRes, yRes, 0, GL_RGB, GL_FLOAT, image);
+			printf("Running Benchmarks...\n");
+
+			printf("Whole fractal:\n");
+#ifdef WITHOPENCL
+			RunBenchmarkOpenCL(window, image, xRes, yRes, -2.5, 1.5, -1.125, 1.125, 50,
+			             &queue, &renderMandelbrotKernel, &pixelsImage, &globalSize, &localSize);
+#else
+			RunBenchmark(window, RenderMandelbrot, image, xRes, yRes, -2.5, 1.5, -1.125, 1.125, 50);
+#endif
+
+			printf("Half cardioid:\n");
+#ifdef WITHOPENCL
+			RunBenchmarkOpenCL(window, image, xRes, yRes, -1.5, 0.25, -0.6, 0.6, 50,
+			             &queue, &renderMandelbrotKernel, &pixelsImage, &globalSize, &localSize);
+#else
+			RunBenchmark(window, RenderMandelbrot, image, xRes, yRes, -1.5, 0.25, -0.6, 0.6, 50);
+#endif
+
+			printf("Highly zoomed:\n");
+#ifdef WITHOPENCL
+			RunBenchmarkOpenCL(window, image, xRes, yRes, -0.67309614449914079,-0.67303510934289079, -0.31334835466695943,-0.31331402239156880, 2000,
+			             &queue, &renderMandelbrotKernel, &pixelsImage, &globalSize, &localSize);
+#else
+			RunBenchmark(window, RenderMandelbrot, image, xRes, yRes, -0.67309614449914079,-0.67303510934289079, -0.31334835466695943,-0.31331402239156880, 2000);
+#endif
+			printf("Complete.\n");
 		}
 
-		// if user presses "p", zoom right, such that the "naive" algorithm looks pixellated
+		// if user presses "p", zoom in, such that the double precision algorithm looks pixellated
 		else if (glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS) {
+			while (glfwGetKey(window, GLFW_KEY_P) != GLFW_RELEASE) {
+				glfwPollEvents();
+			}
 			printf("Precision test...\n");
-//			RenderMandelbrot(image, xRes, yRes, -1.25334325335487362,-1.25334325335481678,  -0.34446232396119353,-0.34446232396116155, 1389952);
-//			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, xRes, yRes, 0, GL_RGB, GL_FLOAT, image);
-			RenderMandelbrotOpenCL(xRes, yRes, -1.25334325335487362,-1.25334325335481678,  -0.34446232396119353,-0.34446232396116155, 1389952, &queue, &renderMandelbrotKernel,
-			                       &pixelsImage, &globalSize, &localSize);
+			xMin = -1.25334325335487362;
+			xMax = -1.25334325335481678;
+			yMin = -0.34446232396119353;
+			yMax = -0.34446232396116155;
+			maxIters = 1389952;
 		}
 	}
 
 
 
 	// clean up
+#ifdef WITHOPENCL
 	CleanUpCLEnvironment(&platform, &device_id, &contextCL, &queue, &program);
+#endif
 
 	glDeleteProgram(shaderProgram);
 	glDeleteShader(fragmentShader);
@@ -283,6 +320,34 @@ void RunBenchmark(GLFWwindow *window, RenderMandelbrotPtr RenderMandelbrot, floa
 
 
 
+#ifdef WITHOPENCL
+void RunBenchmarkOpenCL(GLFWwindow *window, float *image, const int xRes, const int yRes,
+                      const double xMin, const double xMax, const double yMin, const double yMax,
+                      const int maxIters,
+                      cl_command_queue *queue, cl_kernel *renderMandelbrotKernel, cl_mem *pixelsImage,
+                      size_t *globalSize, size_t *localSize)
+{
+	double startTime = GetWallTime();
+	int framesRendered = 0;
+
+	while ( (framesRendered < 100) || (GetWallTime() - startTime < 2.0) ) {
+
+		RenderMandelbrotOpenCL(xRes, yRes, xMin, xMax, yMin, yMax, maxIters, queue, renderMandelbrotKernel,
+		                       pixelsImage, globalSize, localSize);
+		// draw
+		glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+		// Swap buffers
+		glfwSwapBuffers(window);
+		framesRendered++;
+	}
+
+	double fps = (double)framesRendered/(GetWallTime()-startTime);
+	printf("       fps: %lf\n", fps);
+}
+#endif
+
+
+
 int SetUpOpenGL(GLFWwindow **window, const int xRes, const int yRes,
                 GLuint *vertexShader, GLuint *fragmentShader, GLuint *shaderProgram,
                 GLuint *vao, GLuint *vbo, GLuint *ebo, GLuint *tex)
@@ -303,14 +368,16 @@ int SetUpOpenGL(GLFWwindow **window, const int xRes, const int yRes,
 	*window = glfwCreateWindow( xRes, yRes, "Mandelbrot Set", NULL, NULL);
 	// For fullscreen:
 //	*window = glfwCreateWindow( xRes, yRes, "Mandelbrot Set", glfwGetPrimaryMonitor(), NULL);
+
 	if(*window == NULL ){
 		fprintf(stderr, "Error in SetUpOpenGL(), failed to open GLFW window. Line: %d\n", __LINE__);
 		glfwTerminate();
 		return -1;
 	}
 	glfwMakeContextCurrent(*window);
+
 	// vsync
-	glfwSwapInterval(1);
+//	glfwSwapInterval(1);
 
 	// Initialize GLEW
 	glewExperimental = GL_TRUE;
@@ -436,7 +503,7 @@ void SetInitialValues(double *xMin, double *xMax, double *yMin, double *yMax, in
 }
 
 
-
+#ifdef WITHOPENCL
 // OpenCL functions
 int InitialiseCLEnvironment(cl_platform_id **platform, cl_device_id ***device_id, cl_context *context, cl_command_queue *queue, cl_program *program, GLFWwindow *window)
 {
@@ -575,9 +642,11 @@ int InitialiseCLEnvironment(cl_platform_id **platform, cl_device_id ***device_id
 	free(kernelSource);
 	return EXIT_SUCCESS;
 }
+#endif
 
 
 
+#ifdef WITHOPENCL
 void CleanUpCLEnvironment(cl_platform_id **platform, cl_device_id ***device_id, cl_context *context, cl_command_queue *queue, cl_program *program)
 {
 	//release CL resources
@@ -593,82 +662,4 @@ void CleanUpCLEnvironment(cl_platform_id **platform, cl_device_id ***device_id, 
 	free(*platform);
 	free(*device_id);
 }
-
-
-
-void CheckOpenCLError(cl_int err, int line)
-{
-	if (err != CL_SUCCESS) {
-		char * errString;
-
-		switch(err) {
-			case   0: errString = "CL_SUCCESS"; break;
-			case  -1: errString = "CL_DEVICE_NOT_FOUND"; break;
-			case  -2: errString = "CL_DEVICE_NOT_AVAILABLE"; break;
-			case  -3: errString = "CL_COMPILER_NOT_AVAILABLE"; break;
-			case  -4: errString = "CL_MEM_OBJECT_ALLOCATION_FAILURE"; break;
-			case  -5: errString = "CL_OUT_OF_RESOURCES"; break;
-			case  -6: errString = "CL_OUT_OF_HOST_MEMORY"; break;
-			case  -7: errString = "CL_PROFILING_INFO_NOT_AVAILABLE"; break;
-			case  -8: errString = "CL_MEM_COPY_OVERLAP"; break;
-			case  -9: errString = "CL_IMAGE_FORMAT_MISMATCH"; break;
-			case -10: errString = "CL_IMAGE_FORMAT_NOT_SUPPORTED"; break;
-			case -11: errString = "CL_BUILD_PROGRAM_FAILURE"; break;
-			case -12: errString = "CL_MAP_FAILURE"; break;
-			case -13: errString = "CL_MISALIGNED_SUB_BUFFER_OFFSET"; break;
-			case -14: errString = "CL_EXEC_STATUS_ERROR_FOR_EVENTS_IN_WAIT_LIST"; break;
-			case -15: errString = "CL_COMPILE_PROGRAM_FAILURE"; break;
-			case -16: errString = "CL_LINKER_NOT_AVAILABLE"; break;
-			case -17: errString = "CL_LINK_PROGRAM_FAILURE"; break;
-			case -18: errString = "CL_DEVICE_PARTITION_FAILED"; break;
-			case -19: errString = "CL_KERNEL_ARG_INFO_NOT_AVAILABLE"; break;
-			case -30: errString = "CL_INVALID_VALUE"; break;
-			case -31: errString = "CL_INVALID_DEVICE_TYPE"; break;
-			case -32: errString = "CL_INVALID_PLATFORM"; break;
-			case -33: errString = "CL_INVALID_DEVICE"; break;
-			case -34: errString = "CL_INVALID_CONTEXT"; break;
-			case -35: errString = "CL_INVALID_QUEUE_PROPERTIES"; break;
-			case -36: errString = "CL_INVALID_COMMAND_QUEUE"; break;
-			case -37: errString = "CL_INVALID_HOST_PTR"; break;
-			case -38: errString = "CL_INVALID_MEM_OBJECT"; break;
-			case -39: errString = "CL_INVALID_IMAGE_FORMAT_DESCRIPTOR"; break;
-			case -40: errString = "CL_INVALID_IMAGE_SIZE"; break;
-			case -41: errString = "CL_INVALID_SAMPLER"; break;
-			case -42: errString = "CL_INVALID_BINARY"; break;
-			case -43: errString = "CL_INVALID_BUILD_OPTIONS"; break;
-			case -44: errString = "CL_INVALID_PROGRAM"; break;
-			case -45: errString = "CL_INVALID_PROGRAM_EXECUTABLE"; break;
-			case -46: errString = "CL_INVALID_KERNEL_NAME"; break;
-			case -47: errString = "CL_INVALID_KERNEL_DEFINITION"; break;
-			case -48: errString = "CL_INVALID_KERNEL"; break;
-			case -49: errString = "CL_INVALID_ARG_INDEX"; break;
-			case -50: errString = "CL_INVALID_ARG_VALUE"; break;
-			case -51: errString = "CL_INVALID_ARG_SIZE"; break;
-			case -52: errString = "CL_INVALID_KERNEL_ARGS"; break;
-			case -53: errString = "CL_INVALID_WORK_DIMENSION"; break;
-			case -54: errString = "CL_INVALID_WORK_GROUP_SIZE"; break;
-			case -55: errString = "CL_INVALID_WORK_ITEM_SIZE"; break;
-			case -56: errString = "CL_INVALID_GLOBAL_OFFSET"; break;
-			case -57: errString = "CL_INVALID_EVENT_WAIT_LIST"; break;
-			case -58: errString = "CL_INVALID_EVENT"; break;
-			case -59: errString = "CL_INVALID_OPERATION"; break;
-			case -60: errString = "CL_INVALID_GL_OBJECT"; break;
-			case -61: errString = "CL_INVALID_BUFFER_SIZE"; break;
-			case -62: errString = "CL_INVALID_MIP_LEVEL"; break;
-			case -63: errString = "CL_INVALID_GLOBAL_WORK_SIZE"; break;
-			case -64: errString = "CL_INVALID_PROPERTY"; break;
-			case -65: errString = "CL_INVALID_IMAGE_DESCRIPTOR"; break;
-			case -66: errString = "CL_INVALID_COMPILER_OPTIONS"; break;
-			case -67: errString = "CL_INVALID_LINKER_OPTIONS"; break;
-			case -68: errString = "CL_INVALID_DEVICE_PARTITION_COUNT"; break;
-			case -1000: errString = "CL_INVALID_GL_SHAREGROUP_REFERENCE_KHR"; break;
-			case -1001: errString = "CL_PLATFORM_NOT_FOUND_KHR"; break;
-			case -1002: errString = "CL_INVALID_D3D10_DEVICE_KHR"; break;
-			case -1003: errString = "CL_INVALID_D3D10_RESOURCE_KHR"; break;
-			case -1004: errString = "CL_D3D10_RESOURCE_ALREADY_ACQUIRED_KHR"; break;
-			case -1005: errString = "CL_D3D10_RESOURCE_NOT_ACQUIRED_KHR"; break;
-			default: errString = "Unknown OpenCL error";
-		}
-		printf("OpenCL Error %d (%s), line %d\n", err, errString, line);
-	}
-}
+#endif

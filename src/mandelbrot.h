@@ -20,8 +20,11 @@
 #define GLEW_STATIC
 #include <GL/glew.h>
 
-#include <CL/opencl.h>
-#include <CL/cl_gl.h>
+#ifdef WITHOPENCL
+	#include <CL/opencl.h>
+	#include <CL/cl_gl.h>
+	#include "CheckOpenCLError.h"
+#endif
 
 #include "GaussianBlur.h"
 #include "GetWallTime.h"
@@ -46,9 +49,13 @@ void RenderMandelbrotAVXCPU(float *image, const int xRes, const int yRes,
                       const double xMin, const double xMax, const double yMin, const double yMax,
                       const int maxIters);
 
-// OpenCL. Sets kernel arguments, acquires opengl texture, runs kernel, releases texture
+#ifdef WITHOPENCL
+// OpenCL. Sets kernel arguments, acquires opengl texture, runs kernel, releases texture.
+// This function blocks until OpenCL has finished with the texture, and OpenGL is free to
+// use it.
 void RenderMandelbrotOpenCL(const int xRes, const int yRes,
                       const double xMin, const double xMax, const double yMin, const double yMax,
                       const int maxIters,
                       cl_command_queue *queue, cl_kernel *renderMandelbrotKernel, cl_mem *pixelsImage,
                       size_t *globalSize, size_t *localSize);
+#endif
