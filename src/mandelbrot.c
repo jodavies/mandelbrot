@@ -45,40 +45,38 @@ void SetPixelColour(const int iter, const int maxIters, float mag, float *r, flo
 
 
 
-void RenderMandelbrotCPU(float *image, const int xRes, const int yRes,
-                      const double xMin, const double xMax, const double yMin, const double yMax,
-                      const int maxIters)
+void RenderMandelbrotCPU(renderStruct *render, imageStruct *image)
 {
 
-	if (xMin == ((1.0-(1.0/(double)xRes))*xMin + (1.0-(1.0/(double)xRes))*xMax)
-	 || yMin == ((1.0-(1.0/(double)yRes))*yMin + (1.0-(1.0/(double)xRes))*yMax)) {
+	if (image->xMin == ((1.0-(1.0/(double)image->xRes))*image->xMin + (1.0-(1.0/(double)image->xRes))*image->xMax)
+	 || image->yMin == ((1.0-(1.0/(double)image->yRes))*image->yMin + (1.0-(1.0/(double)image->xRes))*image->yMax)) {
 		printf("PRECISION WARNING!\n");
 	}
 
 	// For each pixel, iterate and store the iteration number when |z|>2 or maxIters
 	#pragma omp parallel for default(none) shared(image) schedule(dynamic)
-	for (int y = 0; y < yRes; y++) {
-		for (int x = 0; x < xRes; x++) {
+	for (int y = 0; y < image->yRes; y++) {
+		for (int x = 0; x < image->xRes; x++) {
 
 			int iter = 0;
 			double u = 0.0, v = 0.0, uNew, vNew;
-			const double xPix = ((double)x/(double)xRes);
-			const double yPix = ((double)y/(double)yRes);
-			const double Rec = (1.0-xPix)*xMin + xPix*xMax;
-			const double Imc = (1.0-yPix)*yMin + yPix*yMax;
+			double uSq = 0.0;
+			double vSq = 0.0;
+			const double xPix = ((double)x/(double)image->xRes);
+			const double yPix = ((double)y/(double)image->yRes);
+			const double Rec = (1.0-xPix)*image->xMin + xPix*image->xMax;
+			const double Imc = (1.0-yPix)*image->yMin + yPix*image->yMax;
 
 
 			// early stop if point is inside cardioid
 			const double q = (Rec - 0.25)*(Rec - 0.25) + Imc*Imc;
 			if (q*(q+(Rec-0.25)) < (Imc*Imc*0.25)) {
-				iter = maxIters;
+				iter = image->maxIters;
 			}
 
 
 			// mandelbrot iterations
-			double uSq = u*u;
-			double vSq = v*v;
-			while ( (uSq+vSq) <= 4.0 && iter < maxIters) {
+			while ( (uSq+vSq) <= 4.0 && iter < image->maxIters) {
 				uNew = uSq-vSq + Rec;
 				uSq = uNew*uNew;
 				vNew = 2.0*u*v + Imc;
@@ -88,23 +86,23 @@ void RenderMandelbrotCPU(float *image, const int xRes, const int yRes,
 				iter++;
 			}
 
-			SetPixelColour(iter, maxIters, uSq+vSq,
-			               &(image[y*xRes*3+x*3+0]),&(image[y*xRes*3+x*3+1]),&(image[y*xRes*3+x*3+2]));
+			SetPixelColour(iter, image->maxIters, uSq+vSq, &(image->pixels[y*image->xRes*3+x*3+0]),
+			               &(image->pixels[y*image->xRes*3+x*3+1]),&(image->pixels[y*image->xRes*3+x*3+2]));
 
 		}
 	}
 #ifdef GAUSSIANBLUR
-	GaussianBlur(image, xRes, yRes);
+	GaussianBlur(image->pixels, image->xRes, image->yRes);
 #endif
 
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image->xRes, image->yRes, 0, GL_RGB, GL_FLOAT, image->pixels);
 }
 
 
 
+#ifdef WITHGMP
 // Routine using GMP library for high precision. High precision variables have prefix "m".
-void RenderMandelbrotGMPCPU(float *image, const int xRes, const int yRes,
-                      const double xMin, const double xMax, const double yMin, const double yMax,
-                      const int maxIters)
+void RenderMandelbrotGMPCPU(renderStruct *render, imageStruct *image)
 {
 
 	// 256 bit floats
@@ -115,18 +113,18 @@ void RenderMandelbrotGMPCPU(float *image, const int xRes, const int yRes,
 	mpf_init_set_ui(mtwo, (unsigned long)2);
 	mpf_init_set_ui(mfour, (unsigned long)4);
 	mpf_t mxMin, mxMax, myMin, myMax;
-	mpf_init_set_d(mxMin, xMin);
-	mpf_init_set_d(mxMax, xMax);
-	mpf_init_set_d(myMin, yMin);
-	mpf_init_set_d(myMax, yMax);
+	mpf_init_set_d(mxMin, image->xMin);
+	mpf_init_set_d(mxMax, image->xMax);
+	mpf_init_set_d(myMin, image->yMin);
+	mpf_init_set_d(myMax, image->yMax);
 	mpf_t mxRes, myRes;
-	mpf_init_set_si(mxRes, xRes);
-	mpf_init_set_si(myRes, yRes);
+	mpf_init_set_si(mxRes, image->xRes);
+	mpf_init_set_si(myRes, image->yRes);
 
 
 	// For each pixel, iterate and store the iteration number when |z|>2 or maxIters
 	#pragma omp parallel for default(none) shared(image,mtwo,mfour,mxMin,mxMax,myMin,myMax,mxRes,myRes) schedule(dynamic)
-	for (int y = 0; y < yRes; y++) {
+	for (int y = 0; y < image->yRes; y++) {
 
 		// x loop invariant
 		mpf_t myPix;
@@ -153,7 +151,7 @@ void RenderMandelbrotGMPCPU(float *image, const int xRes, const int yRes,
 		mpf_init(mytmp2);
 
 
-		for (int x = 0; x < xRes; x++) {
+		for (int x = 0; x < image->xRes; x++) {
 
 			int iter = 0;
 
@@ -161,6 +159,9 @@ void RenderMandelbrotGMPCPU(float *image, const int xRes, const int yRes,
 			unsigned long zero = 0;
 			mpf_set_ui(mu, zero);
 			mpf_set_ui(mv, zero);
+			mpf_set_ui(muSq, zero);
+			mpf_set_ui(mvSq, zero);
+			mpf_set_ui(mmag, zero);
 
 			mpf_ui_div(mxPix, (unsigned long)x, mxRes);
 
@@ -177,13 +178,7 @@ void RenderMandelbrotGMPCPU(float *image, const int xRes, const int yRes,
 			mpf_add(mImc, mytmp1, mytmp2); // all tmp vars available
 
 
-
-			// Initial values of squares and magnitude
-			mpf_mul(muSq, mu, mu);
-			mpf_mul(mvSq, mv, mv);
-			mpf_add(mmag, muSq, mvSq);
-
-			while ( mpf_cmp(mmag, mfour) <= 0 && iter < maxIters) {
+			while ( mpf_cmp(mmag, mfour) <= 0 && iter < image->maxIters) {
 				mpf_sub(mxtmp1, muSq, mvSq);
 				mpf_add(muNew, mxtmp1, mRec); // uNew = uSq - vSq + Rec
 
@@ -201,8 +196,10 @@ void RenderMandelbrotGMPCPU(float *image, const int xRes, const int yRes,
 				iter++;
 			}
 
-			SetPixelColour(iter, maxIters, (float)mpf_get_d(mmag),
-			               &(image[y*xRes*3+x*3+0]),&(image[y*xRes*3+x*3+1]),&(image[y*xRes*3+x*3+2]));
+			SetPixelColour(iter, image->maxIters, (float)mpf_get_d(mmag),
+			               &(image->pixels[y*image->xRes*3+x*3+0]),
+			               &(image->pixels[y*image->xRes*3+x*3+1]),
+			               &(image->pixels[y*image->xRes*3+x*3+2]));
 
 
 		}
@@ -240,34 +237,36 @@ void RenderMandelbrotGMPCPU(float *image, const int xRes, const int yRes,
 
 
 #ifdef GAUSSIANBLUR
-	GaussianBlur(image, xRes, yRes);
+	GaussianBlur(image->pixels, image->xRes, image->yRes);
 #endif
 
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image->xRes, image->yRes, 0, GL_RGB, GL_FLOAT, image->pixels);
 }
+#endif
 
 
+
+#ifdef WITHAVX
 // Vectorized routine using AVX intrinsics. Vector variables have a "v" prefix.
-void RenderMandelbrotAVXCPU(float *image, const int xRes, const int yRes,
-                      const double xMin, const double xMax, const double yMin, const double yMax,
-                      const int maxIters)
+void RenderMandelbrotAVXCPU(renderStruct *render, imageStruct *image)
 {
 
-	if (xMin == ((1.0-(1.0/(double)xRes))*xMin + (1.0-(1.0/(double)xRes))*xMax)
-	 || yMin == ((1.0-(1.0/(double)yRes))*yMin + (1.0-(1.0/(double)yRes))*yMax)) {
+	if (image->xMin == ((1.0-(1.0/(double)image->xRes))*image->xMin + (1.0-(1.0/(double)image->xRes))*image->xMax)
+	 || image->yMin == ((1.0-(1.0/(double)image->yRes))*image->yMin + (1.0-(1.0/(double)image->yRes))*image->yMax)) {
 		printf("PRECISION WARNING!\n");
 	}
 
-	const __m256d vxMin = _mm256_set1_pd(xMin);
-	const __m256d vxMax = _mm256_set1_pd(xMax);
-	const __m256d vyMin = _mm256_set1_pd(yMin);
-	const __m256d vyMax = _mm256_set1_pd(yMax);
-	const __m256d vxRes = _mm256_set1_pd((double)xRes);
-	const __m256d vyRes = _mm256_set1_pd((double)yRes);
+	const __m256d vxMin = _mm256_set1_pd(image->xMin);
+	const __m256d vxMax = _mm256_set1_pd(image->xMax);
+	const __m256d vyMin = _mm256_set1_pd(image->yMin);
+	const __m256d vyMax = _mm256_set1_pd(image->yMax);
+	const __m256d vxRes = _mm256_set1_pd((double)image->xRes);
+	const __m256d vyRes = _mm256_set1_pd((double)image->yRes);
 
 	// For each pixel, iterate and store the iteration number when |z|>2 or maxIters
 	#pragma omp parallel for default(none) shared(image) schedule(dynamic)
-	for (int y = 0; y < yRes; y++) {
-		for (int x = 0; x < xRes; x+=4) {
+	for (int y = 0; y < image->yRes; y++) {
+		for (int x = 0; x < image->xRes; x+=4) {
 
 			const __m256d vxPix = _mm256_div_pd(_mm256_set_pd(x+3,x+2,x+1,x+0), vxRes);
 			const __m256d vyPix = _mm256_div_pd(_mm256_set1_pd(y), vyRes);
@@ -302,7 +301,7 @@ void RenderMandelbrotAVXCPU(float *image, const int xRes, const int yRes,
 			__m256d vvuvv = _mm256_set1_pd(0.0);
 
 			// Loop on non-vector iteration count. If this hits maxIters, all four entries have diverged.
-			while (iter++ < maxIters) {
+			while (iter++ < image->maxIters) {
 
 				vu = _mm256_add_pd(_mm256_sub_pd(vuSq, vvSq), vRec);
 				vv = _mm256_add_pd(_mm256_mul_pd(_mm256_set1_pd(2.0),vvuvv), vImc);
@@ -346,44 +345,53 @@ void RenderMandelbrotAVXCPU(float *image, const int xRes, const int yRes,
 			__m256d vmagnitudeFinal = _mm256_add_pd(_mm256_mul_pd(vuFinal,vuFinal), _mm256_mul_pd(vvFinal,vvFinal));
 
 			for (int k = 0; k < 4; k++) {
-				SetPixelColour((int)(((double*)&viter)[k]), maxIters, ((double*)&vmagnitudeFinal)[k],
-							&(image[y*xRes*3+(x+k)*3+0]),&(image[y*xRes*3+(x+k)*3+1]),&(image[y*xRes*3+(x+k)*3+2]));
+				SetPixelColour((int)(((double*)&viter)[k]), image->maxIters, ((double*)&vmagnitudeFinal)[k],
+							&(image->pixels[y*image->xRes*3+(x+k)*3+0]),
+							&(image->pixels[y*image->xRes*3+(x+k)*3+1]),
+							&(image->pixels[y*image->xRes*3+(x+k)*3+2]));
 			}
 
 		}
 	}
 #ifdef GAUSSIANBLUR
-	GaussianBlur(image, xRes, yRes);
+	GaussianBlur(image->pixels, image->xRes, image->yRes);
 #endif
 
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image->xRes, image->yRes, 0, GL_RGB, GL_FLOAT, image->pixels);
 }
+#endif
 
 
 
 #ifdef WITHOPENCL
-void RenderMandelbrotOpenCL(const int xRes, const double xMin, const double xMax, const double yMin,
-                            const double yMax, const int maxIters,
-                            cl_command_queue *queue, cl_kernel *renderMandelbrotKernel, cl_kernel *gaussianBlurKernel,
-                            cl_mem *pixelsImage, size_t *globalSize, size_t *localSize)
+void RenderMandelbrotOpenCL(renderStruct *render, imageStruct *image)
 {
 	int err;
 	// Update kernel args
-	err  = clSetKernelArg(*renderMandelbrotKernel, 3, sizeof(double), &xMin);
-	err |= clSetKernelArg(*renderMandelbrotKernel, 4, sizeof(double), &xMax);
-	err |= clSetKernelArg(*renderMandelbrotKernel, 5, sizeof(double), &yMin);
-	err |= clSetKernelArg(*renderMandelbrotKernel, 6, sizeof(double), &yMax);
-	err |= clSetKernelArg(*renderMandelbrotKernel, 7, sizeof(int), &maxIters);
+	err  = clSetKernelArg(render->renderMandelbrotKernel, 3, sizeof(double), &(image->xMin));
+	err |= clSetKernelArg(render->renderMandelbrotKernel, 4, sizeof(double), &(image->xMax));
+	err |= clSetKernelArg(render->renderMandelbrotKernel, 5, sizeof(double), &(image->yMin));
+	err |= clSetKernelArg(render->renderMandelbrotKernel, 6, sizeof(double), &(image->yMax));
+	err |= clSetKernelArg(render->renderMandelbrotKernel, 7, sizeof(int), &(image->maxIters));
 	CheckOpenCLError(err, __LINE__);
 
+	err = clEnqueueNDRangeKernel(render->queue, render->renderMandelbrotKernel, 1, NULL,
+	                             &(render->globalSize), &(render->localSize), 0, NULL, NULL);
+	CheckOpenCLError(err, __LINE__);
+
+	// Take ownership of OpenGL texture
 	glFinish();
-	err = clEnqueueAcquireGLObjects(*queue, 1, pixelsImage, 0, 0, NULL);
+	err = clEnqueueAcquireGLObjects(render->queue, 1, &(render->pixelsTex), 0, 0, NULL);
 	CheckOpenCLError(err, __LINE__);
-	err = clEnqueueNDRangeKernel(*queue, *renderMandelbrotKernel, 1, NULL, globalSize, localSize, 0, NULL, NULL);
+
+	// Run blur kernel, which blurs (if GAUSSIANBLUR) and writes to texture
+	err = clEnqueueNDRangeKernel(render->queue, render->gaussianBlurKernel, 1, NULL,
+	                             &(render->globalSize), &(render->localSize), 0, NULL, NULL);
 	CheckOpenCLError(err, __LINE__);
-	err = clEnqueueNDRangeKernel(*queue, *gaussianBlurKernel, 1, NULL, globalSize, localSize, 0, NULL, NULL);
+
+	// Release ownership of OpenGL texture
+	err = clEnqueueReleaseGLObjects(render->queue, 1, &(render->pixelsTex), 0, 0, NULL);
 	CheckOpenCLError(err, __LINE__);
-	err = clEnqueueReleaseGLObjects(*queue, 1, pixelsImage, 0, 0, NULL);
-	CheckOpenCLError(err, __LINE__);
-	clFinish(*queue);
+	clFinish(render->queue);
 }
 #endif

@@ -8,11 +8,18 @@
 // Includes
 #include <stdio.h>
 #include <math.h>
-#include <gmp.h>
-#include <immintrin.h>
+
+#ifdef WITHGMP
+	#include <gmp.h>
+#endif
+
+#ifdef WITHAVX
+	#include <immintrin.h>
+#endif
 
 #define GLEW_STATIC
 #include <GL/glew.h>
+#include <GLFW/glfw3.h>
 
 #ifdef WITHOPENCL
 	#include <CL/opencl.h>
@@ -20,6 +27,7 @@
 	#include "CheckOpenCLError.h"
 #endif
 
+#include "structs.h"
 #include "GaussianBlur.h"
 #include "config.h"
 #include "GetWallTime.h"
@@ -30,26 +38,21 @@ void SetPixelColour(const int iter, const int maxIters, float mag, float *r, flo
 
 
 // Basic routine, using CPU.
-void RenderMandelbrotCPU(float *image, const int xRes, const int yRes,
-                      const double xMin, const double xMax, const double yMin, const double yMax,
-                      const int maxIters);
+void RenderMandelbrotCPU(renderStruct *render, imageStruct *image);
 
+#ifdef WITHGMP
 // High precision routine using GMP
-void RenderMandelbrotGMPCPU(float *image, const int xRes, const int yRes,
-                      const double xMin, const double xMax, const double yMin, const double yMax,
-                      const int maxIters);
+void RenderMandelbrotGMPCPU(renderStruct *render, imageStruct *image);
+#endif
 
+#ifdef WITHAVX
 // AVX Vectorized
-void RenderMandelbrotAVXCPU(float *image, const int xRes, const int yRes,
-                      const double xMin, const double xMax, const double yMin, const double yMax,
-                      const int maxIters);
+void RenderMandelbrotAVXCPU(renderStruct *render, imageStruct *image);
+#endif
 
 #ifdef WITHOPENCL
 // OpenCL. Sets kernel arguments, acquires opengl texture, runs kernel, releases texture.
 // This function blocks until OpenCL has finished with the texture, and OpenGL is free to
 // use it.
-void RenderMandelbrotOpenCL(const int xRes, const double xMin, const double xMax, const double yMin,
-                            const double yMax, const int maxIters,
-                            cl_command_queue *queue, cl_kernel *renderMandelbrotKernel, cl_kernel *gaussianBlurKernel,
-                            cl_mem *pixelsImage, size_t *globalSize, size_t *localSize);
+void RenderMandelbrotOpenCL(renderStruct *render, imageStruct *image);
 #endif

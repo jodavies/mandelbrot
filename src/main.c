@@ -1,3 +1,7 @@
+// Known issues/bugs:
+//		-- Gaussian Blur routines don't handle the edge pixels correctly.
+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <limits.h>
@@ -27,33 +31,19 @@
 
 
 
-
-
 // For mandelbrot function pointer:
-typedef void (*RenderMandelbrotPtr)(float *image, const int xRes, const int yRes,
-                                    const double xMin, const double xMax, const double yMin, const double yMax,
-                                    const int maxIters);
+typedef void (*RenderMandelbrotPtr)(renderStruct *render, imageStruct *image);
 
-// Test fps for a particular range/zoom, render at least 10 frames or run for 1 second
-void RunBenchmark(GLFWwindow *window, RenderMandelbrotPtr RenderMandelbrot, float *image, const int xRes, const int yRes,
-                      const double xMin, const double xMax, const double yMin, const double yMax,
-                      const int maxIters);
-#ifdef WITHOPENCL
-// OpenCL version requires extra arguments
-void RunBenchmarkOpenCL(GLFWwindow *window, float *image, const int xRes, const int yRes,
-                      const double xMin, const double xMax, const double yMin, const double yMax,
-                      const int maxIters,
-                      cl_command_queue *queue, cl_kernel *renderMandelbrotKernel, cl_kernel *gaussianBlurkernel,
-                      cl_mem *pixelsImage, size_t *globalSize, size_t *localSize);
-#endif
+// Test fps for a given range/zoom, render at least 10 frames or run for 1 second
+void RunBenchmark(renderStruct *render, imageStruct *image, RenderMandelbrotPtr RenderMandelbrot);
 
-// Set initial values for render ranges, number of iterations. This is a function as it is called
-// in more than one place.
-void SetInitialValues(double *xMin, double *xMax, double *yMin, double *yMax, int *maxIters,
-                      const int xRes, const int yRes);
+// Set initial values for render ranges, number of iterations.
+void SetInitialValues(imageStruct *image);
 
-// Save pixel values to file for external use
-void WriteImageToFile(float *image, const int xRes, const int yRes);
+// Smoothly zoom from one configuration to another, drawing interpolated frames.
+void SmoothZoom(renderStruct *render, imageStruct *image, RenderMandelbrotPtr RenderMandelbrot,
+                const double xReleasePos, const double yReleasePos,
+                const double zoomFactor, const double itersFactor);
 
 // Initialize and configure OpenGL
 int SetUpOpenGL(GLFWwindow **window, const int xRes, const int yRes,
@@ -71,28 +61,36 @@ char *kernelFileName = "src/mandelbrotKernel.cl";
 
 int main(void)
 {
+	// Set render function, dependent on compile time flag. All have the same signature,
+	// with all necessary variables defined inside the structs.
+#ifdef WITHOPENCL
+	RenderMandelbrotPtr RenderMandelbrot = &RenderMandelbrotOpenCL;
+#elif defined(WITHAVX)
 	RenderMandelbrotPtr RenderMandelbrot = &RenderMandelbrotAVXCPU;
+#elif defined(WITHGMP)
+	RenderMandelbrotPtr RenderMandelbrot = &RenderMandelbrotGMPCPU;
+#else
+	RenderMandelbrotPtr RenderMandelbrot = &RenderMandelbrotCPU;
+#endif
 
-	// Define image size and min/max coords. x is the real axis and y the imaginary
-	const int xRes = 2560;
-	const int yRes = 1440;
 
-	// boudary variables and max iteration count
-	double xMin, xMax, yMin, yMax;
-	int maxIters;
-	SetInitialValues(&xMin, &xMax, &yMin, &yMax, &maxIters, xRes, yRes);
-	printf("Initial Boundaries: %lf,%lf,  %lf,%lf\n", xMin,xMax, yMin,yMax);
-
+	// Define and initialize structs
+	imageStruct image;
+	renderStruct render;
+	// Set image resolution
+	image.xRes = XRESOLUTION;
+	image.yRes = YRESOLUTION;
+	// Initial values for boundaries, iteration count
+	SetInitialValues(&image);
 	// Allocate array of floats which represent the pixels. 3 floats per pixel for RGB.
-	float *image;
-	image = malloc(xRes * yRes * sizeof *image *3);
+	image.pixels = malloc(image.xRes * image.yRes * sizeof *(image.pixels) *3);
 
 
 	// OpenGL variables and setup
-	GLFWwindow *window = NULL;
+	render.window = NULL;
 	GLuint vertexShader, fragmentShader, shaderProgram;
 	GLuint vao, vbo, ebo, tex;
-	SetUpOpenGL(&window, xRes, yRes, &vertexShader, &fragmentShader, &shaderProgram, &vao, &vbo, &ebo, &tex);
+	SetUpOpenGL(&(render.window), image.xRes, image.yRes, &vertexShader, &fragmentShader, &shaderProgram, &vao, &vbo, &ebo, &tex);
 
 
 #ifdef WITHOPENCL
@@ -100,41 +98,38 @@ int main(void)
 	cl_platform_id    *platform;
 	cl_device_id      **device_id;
 	cl_context        contextCL;
-	cl_command_queue  queue;
 	cl_program        program;
-	cl_kernel         renderMandelbrotKernel, gaussianBlurKernel;
 	cl_int            err;
-	cl_mem            pixels; // This will be OpenCL-only working memory
-	cl_mem            pixelsImage; // This will be aquired from OpenGL texture
-	size_t globalSize = xRes*yRes;
-	size_t localSize = 64;
+	render.globalSize = image.xRes * image.yRes;
+	render.localSize = 64;
 
-	if (InitialiseCLEnvironment(&platform, &device_id, &contextCL, &queue, &program, window) == EXIT_FAILURE) {
+	if (InitialiseCLEnvironment(&platform, &device_id, &contextCL, &(render.queue), &program, render.window) == EXIT_FAILURE) {
 		printf("Error initialising OpenCL environment\n");
 		return EXIT_FAILURE;
 	}
-	size_t sizeBytes = xRes * yRes * 3 * sizeof(float);
-	pixels = clCreateBuffer(contextCL, CL_MEM_READ_WRITE, sizeBytes, NULL, &err);
+	size_t sizeBytes = image.xRes * image.yRes * 3 * sizeof(float);
+	render.pixelsDevice = clCreateBuffer(contextCL, CL_MEM_READ_WRITE, sizeBytes, NULL, &err);
+
 
 	// finish texture initialization so that we can use with OpenCL
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, xRes, yRes, 0, GL_RGB, GL_FLOAT, image);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image.xRes, image.yRes, 0, GL_RGB, GL_FLOAT, image.pixels);
 	// Configure image from OpenGL texture "tex"
-	pixelsImage = clCreateFromGLTexture(contextCL, CL_MEM_WRITE_ONLY, GL_TEXTURE_2D, 0, tex, &err);
+	render.pixelsTex = clCreateFromGLTexture(contextCL, CL_MEM_WRITE_ONLY, GL_TEXTURE_2D, 0, tex, &err);
 	CheckOpenCLError(err, __LINE__);
 
-	// Create kernel
-	renderMandelbrotKernel = clCreateKernel(program, "renderMandelbrotKernel", &err);
+
+	// Create kernels
+	render.renderMandelbrotKernel = clCreateKernel(program, "renderMandelbrotKernel", &err);
 	CheckOpenCLError(err, __LINE__);
-	gaussianBlurKernel = clCreateKernel(program, "gaussianBlurKernel", &err);
+	render.gaussianBlurKernel = clCreateKernel(program, "gaussianBlurKernel", &err);
 	CheckOpenCLError(err, __LINE__);
-	err  = clSetKernelArg(renderMandelbrotKernel, 0, sizeof(cl_mem), &pixels);
-	err |= clSetKernelArg(renderMandelbrotKernel, 1, sizeof(int), &xRes);
-	err |= clSetKernelArg(renderMandelbrotKernel, 2, sizeof(int), &yRes);
+	err  = clSetKernelArg(render.renderMandelbrotKernel, 0, sizeof(cl_mem), &(render.pixelsDevice));
+	err |= clSetKernelArg(render.renderMandelbrotKernel, 1, sizeof(int), &(image.xRes));
+	err |= clSetKernelArg(render.renderMandelbrotKernel, 2, sizeof(int), &(image.yRes));
 	CheckOpenCLError(err, __LINE__);
-	err  = clSetKernelArg(gaussianBlurKernel, 0, sizeof(cl_mem), &pixelsImage);
-	err |= clSetKernelArg(gaussianBlurKernel, 1, sizeof(int), &xRes);
-	err |= clSetKernelArg(gaussianBlurKernel, 2, sizeof(cl_mem), &pixels);
-	err |= clSetKernelArg(gaussianBlurKernel, 2, sizeof(cl_mem), &pixels);
+	err  = clSetKernelArg(render.gaussianBlurKernel, 0, sizeof(cl_mem), &(render.pixelsTex));
+	err |= clSetKernelArg(render.gaussianBlurKernel, 1, sizeof(int), &(image.xRes));
+	err |= clSetKernelArg(render.gaussianBlurKernel, 2, sizeof(cl_mem), &(render.pixelsDevice));
 	CheckOpenCLError(err, __LINE__);
 #endif
 
@@ -142,24 +137,17 @@ int main(void)
 	// Start main loop: Update until we encounter user input. Look for Esc key (quit), left and right mount
 	// buttons (zoom in on cursor position, zoom out on cursor position), "r" -- reset back to initial coords,
 	// "b" -- run some benchmarks, "p" -- display a double precision limited zoom.
-
 	// Re-render the Mandelbrot set as and when we need, in the user input conditionals.
-	// Initial render:
-#ifdef WITHOPENCL
-		RenderMandelbrotOpenCL(xRes, xMin, xMax, yMin, yMax, maxIters, &queue, &renderMandelbrotKernel,
-		                       &gaussianBlurKernel, &pixelsImage, &globalSize, &localSize);
-#else
-		RenderMandelbrot(image, xRes, yRes, xMin, xMax, yMin, yMax, maxIters);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, xRes, yRes, 0, GL_RGB, GL_FLOAT, image);
-#endif
 
-	while (!glfwWindowShouldClose(window)) {
+	// Initial render:
+	RenderMandelbrot(&render, &image);
+
+	while (!glfwWindowShouldClose(render.window)) {
 
 		// draw
 		glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-
 		// Swap buffers
-		glfwSwapBuffers(window);
+		glfwSwapBuffers(render.window);
 
 
 		// USER INPUT TESTS.
@@ -170,229 +158,130 @@ int main(void)
 
 
 		// if user presses Esc, close window to leave loop
-		if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
-		    glfwSetWindowShouldClose(window, GL_TRUE);
+		if (glfwGetKey(render.window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+		    glfwSetWindowShouldClose(render.window, GL_TRUE);
 		}
 
 
 		// if user left-clicks in window, zoom in, centering on cursor position
 		// if click and drag, simply re-position centre without zooming
-		else if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
+		else if (glfwGetMouseButton(render.window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
 
 			// Get Press cursor location
 			double xPressPos, yPressPos, xReleasePos, yReleasePos;
 			int shift = 0;
-			glfwGetCursorPos(window, &xPressPos, &yPressPos);
+			glfwGetCursorPos(render.window, &xPressPos, &yPressPos);
 
 			// Wait for mousebutton release, re-rendering as mouse moves
-			while (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) != GLFW_RELEASE) {
+			while (glfwGetMouseButton(render.window, GLFW_MOUSE_BUTTON_LEFT) != GLFW_RELEASE) {
 
-				glfwGetCursorPos(window, &xReleasePos, &yReleasePos);
+				glfwGetCursorPos(render.window, &xReleasePos, &yReleasePos);
 
 				if (fabs(xReleasePos-xPressPos) > 3 || fabs(yReleasePos-yPressPos) > 3) {
-					// Set shift variable. Don't zoom below if this is 1
+					// Set shift variable. Don't zoom after button release if this is 1
 					shift = 1;
 					// Determine shift in mandelbrot coords
-					double xShift = (xReleasePos-xPressPos)/(double)xRes*(xMax-xMin);
-					double yShift = (yReleasePos-yPressPos)/(double)yRes*(yMax-yMin);
+					double xShift = (xReleasePos-xPressPos)/(double)image.xRes*(image.xMax-image.xMin);
+					double yShift = (yReleasePos-yPressPos)/(double)image.yRes*(image.yMax-image.yMin);
 
 					// Add shift to boundaries
-					xMin = xMin - xShift;
-					xMax = xMax - xShift;
-					yMin = yMin - yShift;
-					yMax = yMax - yShift;
+					image.xMin = image.xMin - xShift;
+					image.xMax = image.xMax - xShift;
+					image.yMin = image.yMin - yShift;
+					image.yMax = image.yMax - yShift;
 
 					// Update "current" (press) position
 					xPressPos = xReleasePos;
 					yPressPos = yReleasePos;
 
-					// Re-render
-#ifdef WITHOPENCL
-					RenderMandelbrotOpenCL(xRes, xMin, xMax, yMin, yMax, maxIters, &queue, &renderMandelbrotKernel,
-			                       &gaussianBlurKernel, &pixelsImage, &globalSize, &localSize);
-#else
-					RenderMandelbrot(image, xRes, yRes, xMin, xMax, yMin, yMax, maxIters);
-					glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, xRes, yRes, 0, GL_RGB, GL_FLOAT, image);
-#endif
+					// Re-render and draw
+					RenderMandelbrot(&render, &image);
 					glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-					glfwSwapBuffers(window);
+					glfwSwapBuffers(render.window);
 				}
 				glfwPollEvents();
 			}
 
-
 			// else, zoom in smoothly over ZOOMSTEPS frames
 			if (!shift) {
-				// Determine new centre
-				const double xCentreNew = (xReleasePos/(double)xRes*(xMax-xMin) + xMin);
-				const double yCentreNew = (yReleasePos/(double)yRes*(yMax-yMin) + yMin);
-				// Store old min, max values, determine new min, max values
-				const double xMinOld = xMin;
-				const double xMaxOld = xMax;
-				const double yMinOld = yMin;
-				const double yMaxOld = yMax;
-				const double xMinNew = xCentreNew - (xMax-xMin)/2.0/ZOOMFACTOR;
-				const double xMaxNew = xCentreNew + (xMax-xMin)/2.0/ZOOMFACTOR;
-				const double yMinNew = yCentreNew - (yMax-yMin)/2.0/ZOOMFACTOR;
-				const double yMaxNew = yCentreNew + (yMax-yMin)/2.0/ZOOMFACTOR;
-				// Store old maxIters value
-				const int maxItersOld = maxIters;
-
-				// Zoom into new position in ZOOMSTEPS steps, interpolating between old and
-				// new boundaries
-				for (int i = 1; i <= ZOOMSTEPS; i++) {
-					double t = INTERPFUNC(i);
-
-					xMin = xMinOld + (xMinNew - xMinOld)*t;
-					xMax = xMaxOld + (xMaxNew - xMaxOld)*t;
-					yMin = yMinOld + (yMinNew - yMinOld)*t;
-					yMax = yMaxOld + (yMaxNew - yMaxOld)*t;
-					maxIters = maxItersOld + (ITERSFACTOR-1.0)*maxItersOld*t;
-
-					// Re-render mandelbrot set and draw
-#ifdef WITHOPENCL
-					RenderMandelbrotOpenCL(xRes, xMin, xMax, yMin, yMax, maxIters, &queue, &renderMandelbrotKernel,
-			                       &gaussianBlurKernel, &pixelsImage, &globalSize, &localSize);
-#else
-					RenderMandelbrot(image, xRes, yRes, xMin, xMax, yMin, yMax, maxIters);
-					glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, xRes, yRes, 0, GL_RGB, GL_FLOAT, image);
-#endif
-					glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-					glfwSwapBuffers(window);
-				}
+				SmoothZoom(&render, &image, RenderMandelbrot, xReleasePos, yReleasePos, ZOOMFACTOR, ITERSFACTOR);
 			}
-
 		}
 
 
 		// if user right-clicks in window, zoom out, centering on cursor position
-		else if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
-			while (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) != GLFW_RELEASE) {
+		else if (glfwGetMouseButton(render.window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
+			while (glfwGetMouseButton(render.window, GLFW_MOUSE_BUTTON_RIGHT) != GLFW_RELEASE) {
 				glfwPollEvents();
 			}
 
 			// Get cursor position, in *screen coordinates*
 			double xReleasePos, yReleasePos;
-			glfwGetCursorPos(window, &xReleasePos, &yReleasePos);
+			glfwGetCursorPos(render.window, &xReleasePos, &yReleasePos);
 
-			// Determine new centre
-			const double xCentreNew = (xReleasePos/(double)xRes*(xMax-xMin) + xMin);
-			const double yCentreNew = (yReleasePos/(double)yRes*(yMax-yMin) + yMin);
-			// Store old min, max values, determine new min, max values
-			const double xMinOld = xMin;
-			const double xMaxOld = xMax;
-			const double yMinOld = yMin;
-			const double yMaxOld = yMax;
-			const double xMinNew = xCentreNew - (xMax-xMin)/2.0*ZOOMFACTOR;
-			const double xMaxNew = xCentreNew + (xMax-xMin)/2.0*ZOOMFACTOR;
-			const double yMinNew = yCentreNew - (yMax-yMin)/2.0*ZOOMFACTOR;
-			const double yMaxNew = yCentreNew + (yMax-yMin)/2.0*ZOOMFACTOR;
-			// Store old maxIters value
-			const int maxItersOld = maxIters;
-
-			// Zoom into new position in ZOOMSTEPS steps, interpolating between old and
-			// new boundaries
-			for (int i = 1; i <= ZOOMSTEPS; i++) {
-				double t = INTERPFUNC(i);
-
-				xMin = xMinOld + (xMinNew - xMinOld)*t;
-				xMax = xMaxOld + (xMaxNew - xMaxOld)*t;
-				yMin = yMinOld + (yMinNew - yMinOld)*t;
-				yMax = yMaxOld + (yMaxNew - yMaxOld)*t;
-				maxIters = maxItersOld + (1.0/ITERSFACTOR-1.0)*maxItersOld*t;
-
-				// Re-render mandelbrot set and draw
-#ifdef WITHOPENCL
-				RenderMandelbrotOpenCL(xRes, xMin, xMax, yMin, yMax, maxIters, &queue, &renderMandelbrotKernel,
-		                       &gaussianBlurKernel, &pixelsImage, &globalSize, &localSize);
-#else
-				RenderMandelbrot(image, xRes, yRes, xMin, xMax, yMin, yMax, maxIters);
-				glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, xRes, yRes, 0, GL_RGB, GL_FLOAT, image);
-#endif
-				glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-				glfwSwapBuffers(window);
-			}
-
-
-
+			// Zooming out, so use 1/FACTORs.
+			SmoothZoom(&render, &image, RenderMandelbrot, xReleasePos, yReleasePos, 1.0/ZOOMFACTOR, 1.0/ITERSFACTOR);
 		}
 
+
 		// if user presses "r", reset view
-		else if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS) {
-			while (glfwGetKey(window, GLFW_KEY_R) != GLFW_RELEASE) {
+		else if (glfwGetKey(render.window, GLFW_KEY_R) == GLFW_PRESS) {
+			while (glfwGetKey(render.window, GLFW_KEY_R) != GLFW_RELEASE) {
 				glfwPollEvents();
 			}
 			printf("Resetting...\n");
-			SetInitialValues(&xMin, &xMax, &yMin, &yMax, &maxIters, xRes, yRes);
-#ifdef WITHOPENCL
-			RenderMandelbrotOpenCL(xRes, xMin, xMax, yMin, yMax, maxIters, &queue, &renderMandelbrotKernel,
-			                       &gaussianBlurKernel, &pixelsImage, &globalSize, &localSize);
-#else
-			RenderMandelbrot(image, xRes, yRes, xMin, xMax, yMin, yMax, maxIters);
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, xRes, yRes, 0, GL_RGB, GL_FLOAT, image);
-#endif
+			SetInitialValues(&image);
+			RenderMandelbrot(&render, &image);
 		}
 
+
 		// if user presses "b", run some benchmarks.
-		else if (glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS) {
-			while (glfwGetKey(window, GLFW_KEY_B) != GLFW_RELEASE) {
+		else if (glfwGetKey(render.window, GLFW_KEY_B) == GLFW_PRESS) {
+			while (glfwGetKey(render.window, GLFW_KEY_B) != GLFW_RELEASE) {
 				glfwPollEvents();
 			}
 
 			printf("Running Benchmarks...\n");
 
 			printf("Whole fractal:\n");
-#ifdef WITHOPENCL
-			RunBenchmarkOpenCL(window, image, xRes, yRes, -2.5, 1.5, -1.125, 1.125, 50,
-			             &queue, &renderMandelbrotKernel, &gaussianBlurKernel, &pixelsImage, &globalSize, &localSize);
-#else
-			RunBenchmark(window, RenderMandelbrot, image, xRes, yRes, -2.5, 1.5, -1.125, 1.125, 50);
-#endif
+			SetInitialValues(&image);
+			RunBenchmark(&render, &image, RenderMandelbrot);
 
 			printf("Half cardioid:\n");
-#ifdef WITHOPENCL
-			RunBenchmarkOpenCL(window, image, xRes, yRes, -1.5, 0.25, -0.6, 0.6, 50,
-			             &queue, &renderMandelbrotKernel, &gaussianBlurKernel, &pixelsImage, &globalSize, &localSize);
-#else
-			RunBenchmark(window, RenderMandelbrot, image, xRes, yRes, -1.5, 0.25, -0.6, 0.6, 50);
-#endif
+			image.xMin = -1.5;
+			image.xMax = 0.25;
+			image.yMin = -0.6;
+			image.yMax = 0.6;
+			image.maxIters = 50;
+			RunBenchmark(&render, &image, RenderMandelbrot);
 
 			printf("Highly zoomed:\n");
-#ifdef WITHOPENCL
-			RunBenchmarkOpenCL(window, image, xRes, yRes, -0.67309614449914079,-0.67303510934289079, -0.31334835466695943,-0.31331402239156880, 2000,
-			             &queue, &renderMandelbrotKernel, &gaussianBlurKernel, &pixelsImage, &globalSize, &localSize);
-#else
-			RunBenchmark(window, RenderMandelbrot, image, xRes, yRes, -0.67309614449914079,-0.67303510934289079, -0.31334835466695943,-0.31331402239156880, 2000);
-#endif
+			image.xMin = -0.67309614449914079;
+			image.xMax = -0.67303510934289079;
+			image.yMin = -0.31334835466695943;
+			image.yMax = -0.31331402239156880;
+			image.maxIters = 2000;
+			RunBenchmark(&render, &image, RenderMandelbrot);
+
 			printf("Complete.\n");
-		// Re-render with previous coords
-#ifdef WITHOPENCL
-			RenderMandelbrotOpenCL(xRes, xMin, xMax, yMin, yMax, maxIters, &queue, &renderMandelbrotKernel,
-			                       &gaussianBlurKernel, &pixelsImage, &globalSize, &localSize);
-#else
-			RenderMandelbrot(image, xRes, yRes, xMin, xMax, yMin, yMax, maxIters);
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, xRes, yRes, 0, GL_RGB, GL_FLOAT, image);
-#endif
+		// Re-render with original coords
+			SetInitialValues(&image);
+			RenderMandelbrot(&render, &image);
 		}
 
+
 		// if user presses "p", zoom in, such that the double precision algorithm looks pixellated
-		else if (glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS) {
-			while (glfwGetKey(window, GLFW_KEY_P) != GLFW_RELEASE) {
+		else if (glfwGetKey(render.window, GLFW_KEY_P) == GLFW_PRESS) {
+			while (glfwGetKey(render.window, GLFW_KEY_P) != GLFW_RELEASE) {
 				glfwPollEvents();
 			}
 			printf("Precision test...\n");
-			xMin = -1.25334325335487362;
-			xMax = -1.25334325335481678;
-			yMin = -0.34446232396119353;
-			yMax = -0.34446232396116155;
-			maxIters = 1389952;
-#ifdef WITHOPENCL
-			RenderMandelbrotOpenCL(xRes, xMin, xMax, yMin, yMax, maxIters, &queue, &renderMandelbrotKernel,
-			                       &gaussianBlurKernel, &pixelsImage, &globalSize, &localSize);
-#else
-			RenderMandelbrot(image, xRes, yRes, xMin, xMax, yMin, yMax, maxIters);
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, xRes, yRes, 0, GL_RGB, GL_FLOAT, image);
-#endif
+			image.xMin = -1.25334325335487362;
+			image.xMax = -1.25334325335481678;
+			image.yMin = -0.34446232396119353;
+			image.yMax = -0.34446232396116155;
+			image.maxIters = 1389952;
+			RenderMandelbrot(&render, &image);
 		}
 	}
 
@@ -400,7 +289,7 @@ int main(void)
 
 	// clean up
 #ifdef WITHOPENCL
-	CleanUpCLEnvironment(&platform, &device_id, &contextCL, &queue, &program);
+	CleanUpCLEnvironment(&platform, &device_id, &contextCL, &(render.queue), &program);
 #endif
 
 	glDeleteProgram(shaderProgram);
@@ -411,20 +300,18 @@ int main(void)
 	glDeleteVertexArrays(1, &vao);
 
 	// Close OpenGL window and terminate GLFW
-	glfwDestroyWindow(window);
+	glfwDestroyWindow(render.window);
 	glfwTerminate();
 
 
 	// Free dynamically allocated memory
-	free(image);
+	free(image.pixels);
 	return 0;
 }
 
 
 
-void RunBenchmark(GLFWwindow *window, RenderMandelbrotPtr RenderMandelbrot, float *image, const int xRes, const int yRes,
-                      const double xMin, const double xMax, const double yMin, const double yMax,
-                      const int maxIters)
+void RunBenchmark(renderStruct *render, imageStruct *image, RenderMandelbrotPtr RenderMandelbrot)
 {
 	double startTime = GetWallTime();
 	int framesRendered = 0;
@@ -432,14 +319,11 @@ void RunBenchmark(GLFWwindow *window, RenderMandelbrotPtr RenderMandelbrot, floa
 	// disable vsync
 	glfwSwapInterval(0);
 
-	while ( (framesRendered < 5) || (GetWallTime() - startTime < 1.0) ) {
+	while ( (framesRendered < 10) || (GetWallTime() - startTime < 2.0) ) {
 
-		RenderMandelbrot(image, xRes, yRes, xMin, xMax, yMin, yMax, maxIters);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, xRes, yRes, 0, GL_RGB, GL_FLOAT, image);
-		// draw
+		RenderMandelbrot(render, image);
 		glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-		// Swap buffers
-		glfwSwapBuffers(window);
+		glfwSwapBuffers(render->window);
 		framesRendered++;
 	}
 
@@ -452,37 +336,43 @@ void RunBenchmark(GLFWwindow *window, RenderMandelbrotPtr RenderMandelbrot, floa
 
 
 
-#ifdef WITHOPENCL
-void RunBenchmarkOpenCL(GLFWwindow *window, float *image, const int xRes, const int yRes,
-                      const double xMin, const double xMax, const double yMin, const double yMax,
-                      const int maxIters,
-                      cl_command_queue *queue, cl_kernel *renderMandelbrotKernel, cl_kernel *gaussianBlurKernel,
-                      cl_mem *pixelsImage, size_t *globalSize, size_t *localSize)
+void SmoothZoom(renderStruct *render, imageStruct *image, RenderMandelbrotPtr RenderMandelbrot,
+                const double xReleasePos, const double yReleasePos,
+                const double zoomFactor, const double itersFactor)
 {
-	double startTime = GetWallTime();
-	int framesRendered = 0;
+	// Determine new centre
+	const double xCentreNew = (xReleasePos/(double)image->xRes*(image->xMax-image->xMin) + image->xMin);
+	const double yCentreNew = (yReleasePos/(double)image->yRes*(image->yMax-image->yMin) + image->yMin);
 
-	// disable vsync
-	glfwSwapInterval(0);
+	// Store old min, max values, determine new min, max values
+	const double xMinOld = image->xMin;
+	const double xMaxOld = image->xMax;
+	const double yMinOld = image->yMin;
+	const double yMaxOld = image->yMax;
+	const double xMinNew = xCentreNew - (image->xMax-image->xMin)/2.0/zoomFactor;
+	const double xMaxNew = xCentreNew + (image->xMax-image->xMin)/2.0/zoomFactor;
+	const double yMinNew = yCentreNew - (image->yMax-image->yMin)/2.0/zoomFactor;
+	const double yMaxNew = yCentreNew + (image->yMax-image->yMin)/2.0/zoomFactor;
+	// Store old maxIters value
+	const int maxItersOld = image->maxIters;
 
-	while ( (framesRendered < 100) || (GetWallTime() - startTime < 2.0) ) {
+	// Zoom into new position in ZOOMSTEPS steps, interpolating between old and
+	// new boundaries
+	for (int i = 1; i <= ZOOMSTEPS; i++) {
+		double t = INTERPFUNC(i);
+		image->xMin = xMinOld + (xMinNew - xMinOld)*t;
+		image->xMax = xMaxOld + (xMaxNew - xMaxOld)*t;
+		image->yMin = yMinOld + (yMinNew - yMinOld)*t;
+		image->yMax = yMaxOld + (yMaxNew - yMaxOld)*t;
+		image->maxIters = maxItersOld + (itersFactor-1.0)*maxItersOld*t;
 
-		RenderMandelbrotOpenCL(xRes, xMin, xMax, yMin, yMax, maxIters, queue, renderMandelbrotKernel,
-		                       gaussianBlurKernel, pixelsImage, globalSize, localSize);
-		// draw
+		// Re-render mandelbrot set and draw
+		RenderMandelbrot(render, image);
 		glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-		// Swap buffers
-		glfwSwapBuffers(window);
-		framesRendered++;
+		glfwSwapBuffers(render->window);
 	}
 
-	// reenable vsync
-	glfwSwapInterval(1);
-
-	double fps = (double)framesRendered/(GetWallTime()-startTime);
-	printf("       fps: %lf\n", fps);
 }
-#endif
 
 
 
@@ -503,9 +393,11 @@ int SetUpOpenGL(GLFWwindow **window, const int xRes, const int yRes,
 	glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
 
 	// Create a GFLW window and create its OpenGL context
-//	*window = glfwCreateWindow( xRes, yRes, "Mandelbrot Set", NULL, NULL);
-	// For fullscreen:
+#ifdef FULLSCREEN
 	*window = glfwCreateWindow( xRes, yRes, "Mandelbrot Set", glfwGetPrimaryMonitor(), NULL);
+#else
+	*window = glfwCreateWindow( xRes, yRes, "Mandelbrot Set", NULL, NULL);
+#endif
 
 	if(*window == NULL ){
 		fprintf(stderr, "Error in SetUpOpenGL(), failed to open GLFW window. Line: %d\n", __LINE__);
@@ -609,33 +501,17 @@ int SetUpOpenGL(GLFWwindow **window, const int xRes, const int yRes,
 
 
 
-void WriteImageToFile(float *image, const int xRes, const int yRes)
-{
-	// Write image to file
-	FILE *fp = fopen("image.dat","w");
-	for (int y = 0; y < yRes; y++) {
-		for (int x = 0; x < xRes; x++) {
-			fprintf(fp, "%lf ", image[y*xRes*3 + x*3 + 0]);
-		}
-		fprintf(fp, "\n");
-	}
-	fclose(fp);
-}
-
-
-
-void SetInitialValues(double *xMin, double *xMax, double *yMin, double *yMax, int *maxIters,
-                      const int xRes, const int yRes)
+void SetInitialValues(imageStruct *image)
 {
 	// max iteration count. This needs to increase as we zoom in to maintain detail
-	*maxIters = 50;
+	image->maxIters = 50;
 
 	// mandelbrot coordinates
-	*xMin = -2.5;
-	*xMax =  1.5;
+	image->xMin = -2.5;
+	image->xMax =  1.5;
 	// set y limits based on aspect ratio
-	*yMin = -(*xMax-*xMin)/2.0*((double)yRes/(double)xRes);
-	*yMax =  (*xMax-*xMin)/2.0*((double)yRes/(double)xRes);
+	image->yMin = -(image->xMax-image->xMin)/2.0*((double)image->yRes/(double)image->xRes);
+	image->yMax =  (image->xMax-image->xMin)/2.0*((double)image->yRes/(double)image->xRes);
 }
 
 
