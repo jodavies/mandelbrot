@@ -18,7 +18,7 @@ void SetPixelColour(const int iter, const int maxIters, float mag, float *r, flo
 	// earlier than their iteration count suggests.
 	// Then compute its mod with a number of colour steps, so that it cycles
 	// through the gradient repeatedly, and scale it between 0 and 1.
-	float smooth = fmod((iter -log(log(mag)/log(2.0f))),NCOLOURS)/NCOLOURS;
+	float smooth = fmod((iter -log(log(mag)/log(2.0f))),COLOURPERIOD)/COLOURPERIOD;
 
 	if (smooth < 0.25) {
 		*r = 0.0;
@@ -49,7 +49,6 @@ void RenderMandelbrotCPU(float *image, const int xRes, const int yRes,
                       const double xMin, const double xMax, const double yMin, const double yMax,
                       const int maxIters)
 {
-	double startTime = GetWallTime();
 
 	if (xMin == ((1.0-(1.0/(double)xRes))*xMin + (1.0-(1.0/(double)xRes))*xMax)
 	 || yMin == ((1.0-(1.0/(double)yRes))*yMin + (1.0-(1.0/(double)xRes))*yMax)) {
@@ -97,6 +96,7 @@ void RenderMandelbrotCPU(float *image, const int xRes, const int yRes,
 #ifdef GAUSSIANBLUR
 	GaussianBlur(image, xRes, yRes);
 #endif
+
 }
 
 
@@ -106,8 +106,6 @@ void RenderMandelbrotGMPCPU(float *image, const int xRes, const int yRes,
                       const double xMin, const double xMax, const double yMin, const double yMax,
                       const int maxIters)
 {
-	double startTime = GetWallTime();
-
 
 	// 256 bit floats
 	mpf_set_default_prec(256);
@@ -244,6 +242,7 @@ void RenderMandelbrotGMPCPU(float *image, const int xRes, const int yRes,
 #ifdef GAUSSIANBLUR
 	GaussianBlur(image, xRes, yRes);
 #endif
+
 }
 
 
@@ -252,7 +251,6 @@ void RenderMandelbrotAVXCPU(float *image, const int xRes, const int yRes,
                       const double xMin, const double xMax, const double yMin, const double yMax,
                       const int maxIters)
 {
-	double startTime = GetWallTime();
 
 	if (xMin == ((1.0-(1.0/(double)xRes))*xMin + (1.0-(1.0/(double)xRes))*xMax)
 	 || yMin == ((1.0-(1.0/(double)yRes))*yMin + (1.0-(1.0/(double)yRes))*yMax)) {
@@ -357,23 +355,20 @@ void RenderMandelbrotAVXCPU(float *image, const int xRes, const int yRes,
 #ifdef GAUSSIANBLUR
 	GaussianBlur(image, xRes, yRes);
 #endif
+
 }
 
 
 
 #ifdef WITHOPENCL
-void RenderMandelbrotOpenCL(const int xRes, const int yRes,
-                      const double xMin, const double xMax, const double yMin, const double yMax,
-                      const int maxIters,
-                      cl_command_queue *queue, cl_kernel *renderMandelbrotKernel, cl_mem *pixelsImage,
-                      size_t *globalSize, size_t *localSize)
+void RenderMandelbrotOpenCL(const int xRes, const double xMin, const double xMax, const double yMin,
+                            const double yMax, const int maxIters,
+                            cl_command_queue *queue, cl_kernel *renderMandelbrotKernel, cl_kernel *gaussianBlurKernel,
+                            cl_mem *pixelsImage, size_t *globalSize, size_t *localSize)
 {
 	int err;
 	// Update kernel args
-	err  = clSetKernelArg(*renderMandelbrotKernel, 0, sizeof(cl_mem), pixelsImage);
-	err |= clSetKernelArg(*renderMandelbrotKernel, 1, sizeof(int), &xRes);
-	err |= clSetKernelArg(*renderMandelbrotKernel, 2, sizeof(int), &yRes);
-	err |= clSetKernelArg(*renderMandelbrotKernel, 3, sizeof(double), &xMin);
+	err  = clSetKernelArg(*renderMandelbrotKernel, 3, sizeof(double), &xMin);
 	err |= clSetKernelArg(*renderMandelbrotKernel, 4, sizeof(double), &xMax);
 	err |= clSetKernelArg(*renderMandelbrotKernel, 5, sizeof(double), &yMin);
 	err |= clSetKernelArg(*renderMandelbrotKernel, 6, sizeof(double), &yMax);
@@ -384,6 +379,8 @@ void RenderMandelbrotOpenCL(const int xRes, const int yRes,
 	err = clEnqueueAcquireGLObjects(*queue, 1, pixelsImage, 0, 0, NULL);
 	CheckOpenCLError(err, __LINE__);
 	err = clEnqueueNDRangeKernel(*queue, *renderMandelbrotKernel, 1, NULL, globalSize, localSize, 0, NULL, NULL);
+	CheckOpenCLError(err, __LINE__);
+	err = clEnqueueNDRangeKernel(*queue, *gaussianBlurKernel, 1, NULL, globalSize, localSize, 0, NULL, NULL);
 	CheckOpenCLError(err, __LINE__);
 	err = clEnqueueReleaseGLObjects(*queue, 1, pixelsImage, 0, 0, NULL);
 	CheckOpenCLError(err, __LINE__);

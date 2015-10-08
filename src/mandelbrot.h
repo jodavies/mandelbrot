@@ -4,12 +4,6 @@
 // Compute mandelbrot set inside supplied coordinates, returned in *image. Resolution variables used to
 // determine mandelbrot coordinates of each pixel.
 
-// Optional Gaussian blur after computation, can look "nicer"
-#define GAUSSIANBLUR
-
-// Number of colour steps
-#define NCOLOURS 128
-
 
 // Includes
 #include <stdio.h>
@@ -27,6 +21,7 @@
 #endif
 
 #include "GaussianBlur.h"
+#include "config.h"
 #include "GetWallTime.h"
 
 
@@ -53,9 +48,8 @@ void RenderMandelbrotAVXCPU(float *image, const int xRes, const int yRes,
 // OpenCL. Sets kernel arguments, acquires opengl texture, runs kernel, releases texture.
 // This function blocks until OpenCL has finished with the texture, and OpenGL is free to
 // use it.
-void RenderMandelbrotOpenCL(const int xRes, const int yRes,
-                      const double xMin, const double xMax, const double yMin, const double yMax,
-                      const int maxIters,
-                      cl_command_queue *queue, cl_kernel *renderMandelbrotKernel, cl_mem *pixelsImage,
-                      size_t *globalSize, size_t *localSize);
+void RenderMandelbrotOpenCL(const int xRes, const double xMin, const double xMax, const double yMin,
+                            const double yMax, const int maxIters,
+                            cl_command_queue *queue, cl_kernel *renderMandelbrotKernel, cl_kernel *gaussianBlurKernel,
+                            cl_mem *pixelsImage, size_t *globalSize, size_t *localSize);
 #endif
