@@ -1,13 +1,10 @@
-// Known issues/bugs:
-//		-- Gaussian Blur routines don't handle the edge pixels correctly.
-
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <limits.h>
 #include <math.h>
 #include <unistd.h>
 #include <string.h>
+#include <assert.h>
 
 // OpenGL
 #define GLEW_STATIC
@@ -29,6 +26,10 @@
 #include "config.h"
 #include "GetWallTime.h"
 
+#ifdef WITHFREEIMAGE
+	#include <FreeImage.h>
+#endif
+
 
 
 // For mandelbrot function pointer:
@@ -43,7 +44,12 @@ void SetInitialValues(imageStruct *image);
 // Smoothly zoom from one configuration to another, drawing interpolated frames.
 void SmoothZoom(renderStruct *render, imageStruct *image, RenderMandelbrotPtr RenderMandelbrot,
                 const double xReleasePos, const double yReleasePos,
-                const double zoomFactor, const double itersFactor);
+                const double zoomFactor, const double itersFactor, const int zoomSteps);
+
+#ifdef WITHFREEIMAGE
+// Make a high-resolution render of the current view, and save to disk as bmp with FreeImage library
+void HighResolutionRender(renderStruct *render, imageStruct *image, RenderMandelbrotPtr RenderMandelbrot);
+#endif
 
 // Initialize and configure OpenGL
 int SetUpOpenGL(GLFWwindow **window, const int xRes, const int yRes,
@@ -61,12 +67,23 @@ char *kernelFileName = "src/mandelbrotKernel.cl";
 
 int main(void)
 {
+	printf("\n"
+	       "Controls:  - Left/Right Click to zoom in/out, centreing on cursor position.\n"
+	       "           - Left Click and Drag to pan.\n"
+	       "           - r to reset view.\n"
+	       "           - b to run some benchmarks.\n"
+	       "           - p to show a double-precision limited zoom.\n"
+	       "           - h to save a high resolution bitmap of the current view.\n"
+	       "           - Esc to quit.\n\n");
+
 	// Set render function, dependent on compile time flag. All have the same signature,
 	// with all necessary variables defined inside the structs.
 #ifdef WITHOPENCL
 	RenderMandelbrotPtr RenderMandelbrot = &RenderMandelbrotOpenCL;
 #elif defined(WITHAVX)
 	RenderMandelbrotPtr RenderMandelbrot = &RenderMandelbrotAVXCPU;
+	// AVX double prec vector width (4) must divide horizontal (x) resolution
+	assert(XRESOLUTION % 4 == 0);
 #elif defined(WITHGMP)
 	RenderMandelbrotPtr RenderMandelbrot = &RenderMandelbrotGMPCPU;
 #else
@@ -84,6 +101,8 @@ int main(void)
 	SetInitialValues(&image);
 	// Allocate array of floats which represent the pixels. 3 floats per pixel for RGB.
 	image.pixels = malloc(image.xRes * image.yRes * sizeof *(image.pixels) *3);
+	// Update OpenGL texture on render
+	render.updateTex = 1;
 
 
 	// OpenGL variables and setup
@@ -97,24 +116,24 @@ int main(void)
 	// OpenCL variables and setup
 	cl_platform_id    *platform;
 	cl_device_id      **device_id;
-	cl_context        contextCL;
 	cl_program        program;
 	cl_int            err;
 	render.globalSize = image.xRes * image.yRes;
-	render.localSize = 64;
+	render.localSize = OPENCLLOCALSIZE;
+	assert(render.globalSize % render.localSize == 0);
 
-	if (InitialiseCLEnvironment(&platform, &device_id, &contextCL, &(render.queue), &program, render.window) == EXIT_FAILURE) {
+	if (InitialiseCLEnvironment(&platform, &device_id, &(render.contextCL), &(render.queue), &program, render.window) == EXIT_FAILURE) {
 		printf("Error initialising OpenCL environment\n");
 		return EXIT_FAILURE;
 	}
 	size_t sizeBytes = image.xRes * image.yRes * 3 * sizeof(float);
-	render.pixelsDevice = clCreateBuffer(contextCL, CL_MEM_READ_WRITE, sizeBytes, NULL, &err);
+	render.pixelsDevice = clCreateBuffer(render.contextCL, CL_MEM_READ_WRITE, sizeBytes, NULL, &err);
 
 
 	// finish texture initialization so that we can use with OpenCL
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image.xRes, image.yRes, 0, GL_RGB, GL_FLOAT, image.pixels);
 	// Configure image from OpenGL texture "tex"
-	render.pixelsTex = clCreateFromGLTexture(contextCL, CL_MEM_WRITE_ONLY, GL_TEXTURE_2D, 0, tex, &err);
+	render.pixelsTex = clCreateFromGLTexture(render.contextCL, CL_MEM_WRITE_ONLY, GL_TEXTURE_2D, 0, tex, &err);
 	CheckOpenCLError(err, __LINE__);
 
 
@@ -123,13 +142,7 @@ int main(void)
 	CheckOpenCLError(err, __LINE__);
 	render.gaussianBlurKernel = clCreateKernel(program, "gaussianBlurKernel", &err);
 	CheckOpenCLError(err, __LINE__);
-	err  = clSetKernelArg(render.renderMandelbrotKernel, 0, sizeof(cl_mem), &(render.pixelsDevice));
-	err |= clSetKernelArg(render.renderMandelbrotKernel, 1, sizeof(int), &(image.xRes));
-	err |= clSetKernelArg(render.renderMandelbrotKernel, 2, sizeof(int), &(image.yRes));
-	CheckOpenCLError(err, __LINE__);
-	err  = clSetKernelArg(render.gaussianBlurKernel, 0, sizeof(cl_mem), &(render.pixelsTex));
-	err |= clSetKernelArg(render.gaussianBlurKernel, 1, sizeof(int), &(image.xRes));
-	err |= clSetKernelArg(render.gaussianBlurKernel, 2, sizeof(cl_mem), &(render.pixelsDevice));
+	render.gaussianBlurKernel2 = clCreateKernel(program, "gaussianBlurKernel2", &err);
 	CheckOpenCLError(err, __LINE__);
 #endif
 
@@ -177,7 +190,7 @@ int main(void)
 
 				glfwGetCursorPos(render.window, &xReleasePos, &yReleasePos);
 
-				if (fabs(xReleasePos-xPressPos) > 3 || fabs(yReleasePos-yPressPos) > 3) {
+				if (fabs(xReleasePos-xPressPos) > DRAGPIXELS || fabs(yReleasePos-yPressPos) > DRAGPIXELS) {
 					// Set shift variable. Don't zoom after button release if this is 1
 					shift = 1;
 					// Determine shift in mandelbrot coords
@@ -204,7 +217,7 @@ int main(void)
 
 			// else, zoom in smoothly over ZOOMSTEPS frames
 			if (!shift) {
-				SmoothZoom(&render, &image, RenderMandelbrot, xReleasePos, yReleasePos, ZOOMFACTOR, ITERSFACTOR);
+				SmoothZoom(&render, &image, RenderMandelbrot, xReleasePos, yReleasePos, ZOOMFACTOR, ITERSFACTOR, ZOOMSTEPS);
 			}
 		}
 
@@ -220,7 +233,7 @@ int main(void)
 			glfwGetCursorPos(render.window, &xReleasePos, &yReleasePos);
 
 			// Zooming out, so use 1/FACTORs.
-			SmoothZoom(&render, &image, RenderMandelbrot, xReleasePos, yReleasePos, 1.0/ZOOMFACTOR, 1.0/ITERSFACTOR);
+			SmoothZoom(&render, &image, RenderMandelbrot, xReleasePos, yReleasePos, 1.0/ZOOMFACTOR, 1.0/ITERSFACTOR, ZOOMSTEPS);
 		}
 
 
@@ -247,20 +260,28 @@ int main(void)
 			SetInitialValues(&image);
 			RunBenchmark(&render, &image, RenderMandelbrot);
 
-			printf("Half cardioid:\n");
-			image.xMin = -1.5;
-			image.xMax = 0.25;
-			image.yMin = -0.6;
-			image.yMax = 0.6;
-			image.maxIters = 50;
+			printf("Early Bail-out:\n");
+			image.xMin = -0.8153143016681144;
+			image.xMax = -0.6839170011300622;
+			image.yMin = -0.0365167077914237;
+			image.yMax =  0.0373942737612310;
+			image.maxIters = 112;
+			RunBenchmark(&render, &image, RenderMandelbrot);
+
+			printf("Spiral:\n");
+			image.xMin = -0.8673755781976442;
+			image.xMax = -0.8673711898931797;
+			image.yMin = -0.2156059883952151;
+			image.yMax = -0.2156035199739536;
+			image.maxIters = 1757;
 			RunBenchmark(&render, &image, RenderMandelbrot);
 
 			printf("Highly zoomed:\n");
-			image.xMin = -0.67309614449914079;
-			image.xMax = -0.67303510934289079;
-			image.yMin = -0.31334835466695943;
-			image.yMax = -0.31331402239156880;
-			image.maxIters = 2000;
+			image.xMin = -0.8712903154956539;
+			image.xMax = -0.8712903108993595;
+			image.yMin = -0.2293516610223087;
+			image.yMax = -0.2293516584368930;
+			image.maxIters = 10750;
 			RunBenchmark(&render, &image, RenderMandelbrot);
 
 			printf("Complete.\n");
@@ -283,13 +304,26 @@ int main(void)
 			image.maxIters = 1389952;
 			RenderMandelbrot(&render, &image);
 		}
+
+
+		// if user presses "h", render a high resolution version of the current view, and
+		// save it to disk as a bitmap
+		else if (glfwGetKey(render.window, GLFW_KEY_H) == GLFW_PRESS) {
+			while (glfwGetKey(render.window, GLFW_KEY_H) != GLFW_RELEASE) {
+				glfwPollEvents();
+			}
+			double startTime = GetWallTime();
+			printf("Saving high resolution bitmap...\n");
+			HighResolutionRender(&render, &image, RenderMandelbrot);
+			printf("   --- done. Total time: %lfs\n", GetWallTime()-startTime);
+		}
 	}
 
 
 
 	// clean up
 #ifdef WITHOPENCL
-	CleanUpCLEnvironment(&platform, &device_id, &contextCL, &(render.queue), &program);
+	CleanUpCLEnvironment(&platform, &device_id, &(render.contextCL), &(render.queue), &program);
 #endif
 
 	glDeleteProgram(shaderProgram);
@@ -319,7 +353,7 @@ void RunBenchmark(renderStruct *render, imageStruct *image, RenderMandelbrotPtr 
 	// disable vsync
 	glfwSwapInterval(0);
 
-	while ( (framesRendered < 10) || (GetWallTime() - startTime < 2.0) ) {
+	while ( (framesRendered < 20) || (GetWallTime() - startTime < 5.0) ) {
 
 		RenderMandelbrot(render, image);
 		glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
@@ -338,7 +372,7 @@ void RunBenchmark(renderStruct *render, imageStruct *image, RenderMandelbrotPtr 
 
 void SmoothZoom(renderStruct *render, imageStruct *image, RenderMandelbrotPtr RenderMandelbrot,
                 const double xReleasePos, const double yReleasePos,
-                const double zoomFactor, const double itersFactor)
+                const double zoomFactor, const double itersFactor, const int zoomSteps)
 {
 	// Determine new centre
 	const double xCentreNew = (xReleasePos/(double)image->xRes*(image->xMax-image->xMin) + image->xMin);
@@ -356,9 +390,12 @@ void SmoothZoom(renderStruct *render, imageStruct *image, RenderMandelbrotPtr Re
 	// Store old maxIters value
 	const int maxItersOld = image->maxIters;
 
+	// print coords?
+//	printf("New image: (%.16lf,%.16lf),(%.16lf,%.16lf): %d\n", xMinNew, xMaxNew, yMinNew, yMaxNew, (int)((double)maxItersOld*itersFactor));
+
 	// Zoom into new position in ZOOMSTEPS steps, interpolating between old and
 	// new boundaries
-	for (int i = 1; i <= ZOOMSTEPS; i++) {
+	for (int i = 1; i <= zoomSteps; i++) {
 		double t = INTERPFUNC(i);
 		image->xMin = xMinOld + (xMinNew - xMinOld)*t;
 		image->xMax = xMaxOld + (xMaxNew - xMaxOld)*t;
@@ -373,6 +410,76 @@ void SmoothZoom(renderStruct *render, imageStruct *image, RenderMandelbrotPtr Re
 	}
 
 }
+
+
+
+#ifdef WITHFREEIMAGE
+void HighResolutionRender(renderStruct *render, imageStruct *image, RenderMandelbrotPtr RenderMandelbrot)
+{
+	// Set new resolution
+	image->xRes = image->xRes*HIGHRESOLUTIONMULTIPLIER;
+	image->yRes = image->yRes*HIGHRESOLUTIONMULTIPLIER;
+	//Set updateTex flag to 0 so we don't try to draw it on screen.
+	render->updateTex = 0;
+	// Allocate new pixels array of larger size:
+	free(image->pixels);
+	size_t allocSize = image->xRes * image->yRes * sizeof *(image->pixels) *3;
+	printf("   --- reallocating pixels array: %.2lfMB\n", allocSize/1024.0/1024.0);
+	image->pixels = malloc(allocSize);
+
+
+#ifdef WITHOPENCL
+	// With openCL, need to allocate a new device buffer for output. Store the pointer to the OpenGL
+	// texture, and allocate a new device array on this pointer for the output array.
+	cl_int err;
+	cl_mem storepixelsTex = render->pixelsTex;
+	clReleaseMemObject(render->pixelsDevice);
+	printf("   --- reallocating device arrays: %.2lfMB\n", 2.0*allocSize/1024.0/1024.0);
+	render->pixelsDevice = clCreateBuffer(render->contextCL, CL_MEM_READ_WRITE, allocSize, NULL, &err);
+	render->pixelsTex = clCreateBuffer(render->contextCL, CL_MEM_READ_WRITE, allocSize, NULL, &err);
+	render->globalSize = image->xRes * image->yRes;
+	RenderMandelbrot(render, image);
+	size_t readSize = image->xRes * image->yRes * sizeof *(image->pixels) * 3;
+	clEnqueueReadBuffer(render->queue, render->pixelsTex, CL_TRUE, 0, readSize, image->pixels, 0, NULL, NULL);
+
+#else
+	RenderMandelbrot(render, image);
+#endif
+
+
+	// Save bitmap
+	// Create raw pixel array
+	GLubyte * rawPixels;
+	rawPixels = malloc(image->xRes * image->yRes * sizeof *rawPixels *3);
+	for (int i = 0; i < image->xRes*image->yRes*3; i+=3) {
+		rawPixels[i+0] = (GLubyte)((image->pixels)[i+2]*255);
+		rawPixels[i+1] = (GLubyte)((image->pixels)[i+1]*255);
+		rawPixels[i+2] = (GLubyte)((image->pixels)[i+0]*255);
+	}
+	FIBITMAP* bmp = FreeImage_ConvertFromRawBits(rawPixels, image->xRes, image->yRes, 3*image->xRes,
+	                                             24, 0x000000, 0x000000, 0x000000, TRUE);
+	FreeImage_Save(FIF_BMP, bmp, "test.bmp", 0);
+	FreeImage_Unload(bmp);
+	free(rawPixels);
+
+
+	// Reset original values to continue with live rendering
+	image->xRes = image->xRes/HIGHRESOLUTIONMULTIPLIER;
+	image->yRes = image->yRes/HIGHRESOLUTIONMULTIPLIER;
+	render->updateTex = 1;
+	free(image->pixels);
+	image->pixels = malloc(image->xRes * image->yRes * sizeof *(image->pixels) *3);
+
+#ifdef WITHOPENCL
+	clReleaseMemObject(render->pixelsDevice);
+	clReleaseMemObject(render->pixelsTex);
+	render->pixelsTex = storepixelsTex;
+	size_t allocSizeOrig = image->xRes * image->yRes * 3 * sizeof *(image->pixels);
+	render->pixelsDevice = clCreateBuffer(render->contextCL, CL_MEM_READ_WRITE, allocSizeOrig, NULL, &err);
+#endif
+
+}
+#endif
 
 
 
@@ -504,7 +611,7 @@ int SetUpOpenGL(GLFWwindow **window, const int xRes, const int yRes,
 void SetInitialValues(imageStruct *image)
 {
 	// max iteration count. This needs to increase as we zoom in to maintain detail
-	image->maxIters = 50;
+	image->maxIters = MINITERS;
 
 	// mandelbrot coordinates
 	image->xMin = -2.5;

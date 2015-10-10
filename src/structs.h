@@ -22,10 +22,15 @@ typedef struct {
 typedef struct {
 	GLFWwindow *window;
 
+	int updateTex;		// if this is 0, don't update the GL texture.
+	                  // Used in high-resolution render, as we can't
+	                  // draw it to screen.
 #ifdef WITHOPENCL
 	cl_command_queue queue;
+	cl_context contextCL;
 	cl_kernel renderMandelbrotKernel;
 	cl_kernel gaussianBlurKernel;
+	cl_kernel gaussianBlurKernel2;
 	cl_mem pixelsDevice;
 	cl_mem pixelsTex;
 	size_t globalSize;

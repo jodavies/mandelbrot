@@ -68,11 +68,13 @@ void RenderMandelbrotCPU(renderStruct *render, imageStruct *image)
 			const double Imc = (1.0-yPix)*image->yMin + yPix*image->yMax;
 
 
-			// early stop if point is inside cardioid
-			const double q = (Rec - 0.25)*(Rec - 0.25) + Imc*Imc;
-			if (q*(q+(Rec-0.25)) < (Imc*Imc*0.25)) {
-				iter = image->maxIters;
-			}
+#ifdef EARLYBAIL
+	// early bail-out if point is inside cardioid or period 2 bulb
+	const double q = (Rec - 0.25)*(Rec - 0.25) + Imc*Imc;
+	if ((q*(q+(Rec-0.25)) < (Imc*Imc*0.25)) || ((Rec+1.0)*(Rec+1.0) + Imc*Imc < 1.0/16.0)) {
+		iter = image->maxIters;
+	}
+#endif
 
 
 			// mandelbrot iterations
@@ -95,7 +97,9 @@ void RenderMandelbrotCPU(renderStruct *render, imageStruct *image)
 	GaussianBlur(image->pixels, image->xRes, image->yRes);
 #endif
 
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image->xRes, image->yRes, 0, GL_RGB, GL_FLOAT, image->pixels);
+	if (render->updateTex) {
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image->xRes, image->yRes, 0, GL_RGB, GL_FLOAT, image->pixels);
+	}
 }
 
 
@@ -240,7 +244,9 @@ void RenderMandelbrotGMPCPU(renderStruct *render, imageStruct *image)
 	GaussianBlur(image->pixels, image->xRes, image->yRes);
 #endif
 
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image->xRes, image->yRes, 0, GL_RGB, GL_FLOAT, image->pixels);
+	if (render->updateTex) {
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image->xRes, image->yRes, 0, GL_RGB, GL_FLOAT, image->pixels);
+	}
 }
 #endif
 
@@ -357,7 +363,9 @@ void RenderMandelbrotAVXCPU(renderStruct *render, imageStruct *image)
 	GaussianBlur(image->pixels, image->xRes, image->yRes);
 #endif
 
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image->xRes, image->yRes, 0, GL_RGB, GL_FLOAT, image->pixels);
+	if (render->updateTex) {
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image->xRes, image->yRes, 0, GL_RGB, GL_FLOAT, image->pixels);
+	}
 }
 #endif
 
@@ -367,31 +375,60 @@ void RenderMandelbrotAVXCPU(renderStruct *render, imageStruct *image)
 void RenderMandelbrotOpenCL(renderStruct *render, imageStruct *image)
 {
 	int err;
-	// Update kernel args
-	err  = clSetKernelArg(render->renderMandelbrotKernel, 3, sizeof(double), &(image->xMin));
+	// Set kernel args
+	err  = clSetKernelArg(render->renderMandelbrotKernel, 0, sizeof(cl_mem), &(render->pixelsDevice));
+	err |= clSetKernelArg(render->renderMandelbrotKernel, 1, sizeof(int), &(image->xRes));
+	err |= clSetKernelArg(render->renderMandelbrotKernel, 2, sizeof(int), &(image->yRes));
+	err |= clSetKernelArg(render->renderMandelbrotKernel, 3, sizeof(double), &(image->xMin));
 	err |= clSetKernelArg(render->renderMandelbrotKernel, 4, sizeof(double), &(image->xMax));
 	err |= clSetKernelArg(render->renderMandelbrotKernel, 5, sizeof(double), &(image->yMin));
 	err |= clSetKernelArg(render->renderMandelbrotKernel, 6, sizeof(double), &(image->yMax));
 	err |= clSetKernelArg(render->renderMandelbrotKernel, 7, sizeof(int), &(image->maxIters));
+	CheckOpenCLError(err, __LINE__);
+	err  = clSetKernelArg(render->gaussianBlurKernel, 0, sizeof(cl_mem), &(render->pixelsTex));
+	err |= clSetKernelArg(render->gaussianBlurKernel, 1, sizeof(int), &(image->xRes));
+	err |= clSetKernelArg(render->gaussianBlurKernel, 2, sizeof(int), &(image->yRes));
+	err |= clSetKernelArg(render->gaussianBlurKernel, 3, sizeof(cl_mem), &(render->pixelsDevice));
 	CheckOpenCLError(err, __LINE__);
 
 	err = clEnqueueNDRangeKernel(render->queue, render->renderMandelbrotKernel, 1, NULL,
 	                             &(render->globalSize), &(render->localSize), 0, NULL, NULL);
 	CheckOpenCLError(err, __LINE__);
 
-	// Take ownership of OpenGL texture
-	glFinish();
-	err = clEnqueueAcquireGLObjects(render->queue, 1, &(render->pixelsTex), 0, 0, NULL);
-	CheckOpenCLError(err, __LINE__);
+	// If we are supposed to be updating the screen (all cases but high-res render)
+	if (render->updateTex) {
+		// Take ownership of OpenGL texture
+		glFinish();
+		err = clEnqueueAcquireGLObjects(render->queue, 1, &(render->pixelsTex), 0, 0, NULL);
+		CheckOpenCLError(err, __LINE__);
 
-	// Run blur kernel, which blurs (if GAUSSIANBLUR) and writes to texture
-	err = clEnqueueNDRangeKernel(render->queue, render->gaussianBlurKernel, 1, NULL,
-	                             &(render->globalSize), &(render->localSize), 0, NULL, NULL);
-	CheckOpenCLError(err, __LINE__);
+		// Run blur kernel, which blurs (if GAUSSIANBLUR) and writes to texture
+		err = clEnqueueNDRangeKernel(render->queue, render->gaussianBlurKernel, 1, NULL,
+											  &(render->globalSize), &(render->localSize), 0, NULL, NULL);
+		CheckOpenCLError(err, __LINE__);
 
-	// Release ownership of OpenGL texture
-	err = clEnqueueReleaseGLObjects(render->queue, 1, &(render->pixelsTex), 0, 0, NULL);
-	CheckOpenCLError(err, __LINE__);
+		// Release ownership of OpenGL texture
+		err = clEnqueueReleaseGLObjects(render->queue, 1, &(render->pixelsTex), 0, 0, NULL);
+		CheckOpenCLError(err, __LINE__);
+	}
+
+	// else, we are doing a high resolution render. For this, we don't write to the OpenGL
+	// texture, so need to call an alternative gaussian blur kernel that stores in device
+	// global memory. Copy back to host memory in HighResolutionRender().
+	else {
+		err  = clSetKernelArg(render->gaussianBlurKernel2, 0, sizeof(cl_mem), &(render->pixelsTex));
+		err |= clSetKernelArg(render->gaussianBlurKernel2, 1, sizeof(int), &(image->xRes));
+		err |= clSetKernelArg(render->gaussianBlurKernel2, 2, sizeof(int), &(image->yRes));
+		err |= clSetKernelArg(render->gaussianBlurKernel2, 3, sizeof(cl_mem), &(render->pixelsDevice));
+		CheckOpenCLError(err, __LINE__);
+
+		// Run blur kernel 2, which blurs (if GAUSSIANBLUR) and writes to global array
+		err = clEnqueueNDRangeKernel(render->queue, render->gaussianBlurKernel2, 1, NULL,
+											  &(render->globalSize), &(render->localSize), 0, NULL, NULL);
+		CheckOpenCLError(err, __LINE__);
+	}
+
 	clFinish(render->queue);
+
 }
 #endif
