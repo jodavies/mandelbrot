@@ -16,6 +16,8 @@ typedef struct {
 							// is considered converged. Changes with zoom.
 
 	float * pixels;	// array of r,g,b colour values in [0.0,1.0].
+
+	int gaussianBlur;	// 1 or 0, for gaussian blur or not.
 } imageStruct;
 
 // This struct holds variables needed for rendering the image

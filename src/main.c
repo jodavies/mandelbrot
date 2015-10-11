@@ -71,9 +71,11 @@ int main(void)
 	       "Controls:  - Left/Right Click to zoom in/out, centreing on cursor position.\n"
 	       "           - Left Click and Drag to pan.\n"
 	       "           - r to reset view.\n"
+	       "           - q,w to decrease, increase max iteration count\n"
+	       "           - g to toggle Gaussian Blur after computation\n"
 	       "           - b to run some benchmarks.\n"
 	       "           - p to show a double-precision limited zoom.\n"
-	       "           - h to save a high resolution bitmap of the current view.\n"
+	       "           - h to save a high resolution image of the current view to current directory.\n"
 	       "           - Esc to quit.\n\n");
 
 	// Set render function, dependent on compile time flag. All have the same signature,
@@ -103,6 +105,8 @@ int main(void)
 	image.pixels = malloc(image.xRes * image.yRes * sizeof *(image.pixels) *3);
 	// Update OpenGL texture on render
 	render.updateTex = 1;
+	// Gaussian blur after computation
+	image.gaussianBlur = DEFAULTGAUSSIANBLUR;
 
 
 	// OpenGL variables and setup
@@ -244,6 +248,43 @@ int main(void)
 			}
 			printf("Resetting...\n");
 			SetInitialValues(&image);
+			RenderMandelbrot(&render, &image);
+		}
+
+
+		// if user presses "g", toggle gaussian blur
+		else if (glfwGetKey(render.window, GLFW_KEY_G) == GLFW_PRESS) {
+			while (glfwGetKey(render.window, GLFW_KEY_G) != GLFW_RELEASE) {
+				glfwPollEvents();
+			}
+			if (image.gaussianBlur == 1) {
+				printf("Toggling Gaussian Blur Off...\n");
+				image.gaussianBlur = 0;
+			}
+			else {
+				printf("Toggling Gaussian Blur On...\n");
+				image.gaussianBlur = 1;
+			}
+			RenderMandelbrot(&render, &image);
+		}
+
+
+		// if user presses "q", decrease max iteration count
+		else if (glfwGetKey(render.window, GLFW_KEY_Q) == GLFW_PRESS) {
+			while (glfwGetKey(render.window, GLFW_KEY_Q) != GLFW_RELEASE) {
+				glfwPollEvents();
+			}
+			printf("Decreasing max iteration count from %d to %d\n", image.maxIters, (int)(image.maxIters/ITERSFACTOR));
+			image.maxIters /= ITERSFACTOR;
+			RenderMandelbrot(&render, &image);
+		}
+		// if user presses "w", increase max iteration count
+		else if (glfwGetKey(render.window, GLFW_KEY_W) == GLFW_PRESS) {
+			while (glfwGetKey(render.window, GLFW_KEY_W) != GLFW_RELEASE) {
+				glfwPollEvents();
+			}
+			printf("Increasing max iteration count from %d to %d\n", image.maxIters, (int)(image.maxIters*ITERSFACTOR));
+			image.maxIters *= ITERSFACTOR;
 			RenderMandelbrot(&render, &image);
 		}
 
@@ -452,14 +493,15 @@ void HighResolutionRender(renderStruct *render, imageStruct *image, RenderMandel
 	GLubyte * rawPixels;
 	rawPixels = malloc(image->xRes * image->yRes * sizeof *rawPixels *3);
 	for (int i = 0; i < image->xRes*image->yRes*3; i+=3) {
+		// note change in order, rgb -> bgr!
 		rawPixels[i+0] = (GLubyte)((image->pixels)[i+2]*255);
 		rawPixels[i+1] = (GLubyte)((image->pixels)[i+1]*255);
 		rawPixels[i+2] = (GLubyte)((image->pixels)[i+0]*255);
 	}
-	FIBITMAP* bmp = FreeImage_ConvertFromRawBits(rawPixels, image->xRes, image->yRes, 3*image->xRes,
+	FIBITMAP* img = FreeImage_ConvertFromRawBits(rawPixels, image->xRes, image->yRes, 3*image->xRes,
 	                                             24, 0x000000, 0x000000, 0x000000, TRUE);
-	FreeImage_Save(FIF_BMP, bmp, "test.bmp", 0);
-	FreeImage_Unload(bmp);
+	FreeImage_Save(FIF_PNG, img, "test.png", 0);
+	FreeImage_Unload(img);
 	free(rawPixels);
 
 

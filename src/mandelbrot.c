@@ -93,9 +93,10 @@ void RenderMandelbrotCPU(renderStruct *render, imageStruct *image)
 
 		}
 	}
-#ifdef GAUSSIANBLUR
-	GaussianBlur(image->pixels, image->xRes, image->yRes);
-#endif
+
+	if (image->gaussianBlur == 1) {
+		GaussianBlur(image->pixels, image->xRes, image->yRes);
+	}
 
 	if (render->updateTex) {
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image->xRes, image->yRes, 0, GL_RGB, GL_FLOAT, image->pixels);
@@ -240,9 +241,9 @@ void RenderMandelbrotGMPCPU(renderStruct *render, imageStruct *image)
 	mpf_clear(myRes);
 
 
-#ifdef GAUSSIANBLUR
-	GaussianBlur(image->pixels, image->xRes, image->yRes);
-#endif
+	if (image->gaussianBlur == 1) {
+		GaussianBlur(image->pixels, image->xRes, image->yRes);
+	}
 
 	if (render->updateTex) {
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image->xRes, image->yRes, 0, GL_RGB, GL_FLOAT, image->pixels);
@@ -359,9 +360,10 @@ void RenderMandelbrotAVXCPU(renderStruct *render, imageStruct *image)
 
 		}
 	}
-#ifdef GAUSSIANBLUR
-	GaussianBlur(image->pixels, image->xRes, image->yRes);
-#endif
+
+	if (image->gaussianBlur == 1) {
+		GaussianBlur(image->pixels, image->xRes, image->yRes);
+	}
 
 	if (render->updateTex) {
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image->xRes, image->yRes, 0, GL_RGB, GL_FLOAT, image->pixels);
@@ -389,6 +391,7 @@ void RenderMandelbrotOpenCL(renderStruct *render, imageStruct *image)
 	err |= clSetKernelArg(render->gaussianBlurKernel, 1, sizeof(int), &(image->xRes));
 	err |= clSetKernelArg(render->gaussianBlurKernel, 2, sizeof(int), &(image->yRes));
 	err |= clSetKernelArg(render->gaussianBlurKernel, 3, sizeof(cl_mem), &(render->pixelsDevice));
+	err |= clSetKernelArg(render->gaussianBlurKernel, 4, sizeof(int), &(image->gaussianBlur));
 	CheckOpenCLError(err, __LINE__);
 
 	err = clEnqueueNDRangeKernel(render->queue, render->renderMandelbrotKernel, 1, NULL,
@@ -420,6 +423,7 @@ void RenderMandelbrotOpenCL(renderStruct *render, imageStruct *image)
 		err |= clSetKernelArg(render->gaussianBlurKernel2, 1, sizeof(int), &(image->xRes));
 		err |= clSetKernelArg(render->gaussianBlurKernel2, 2, sizeof(int), &(image->yRes));
 		err |= clSetKernelArg(render->gaussianBlurKernel2, 3, sizeof(cl_mem), &(render->pixelsDevice));
+		err |= clSetKernelArg(render->gaussianBlurKernel2, 4, sizeof(int), &(image->gaussianBlur));
 		CheckOpenCLError(err, __LINE__);
 
 		// Run blur kernel 2, which blurs (if GAUSSIANBLUR) and writes to global array

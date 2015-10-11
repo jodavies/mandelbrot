@@ -7,7 +7,7 @@
 //#define FULLSCREEN 1
 
 // Resolution multiplier to use for high-resolution render, to save as bitmap
-#define HIGHRESOLUTIONMULTIPLIER 6
+#define HIGHRESOLUTIONMULTIPLIER 7
 
 
 // For smooth zoom in and out, the number of interpolated frames to render
@@ -27,8 +27,8 @@
 // Minimum value for max iteration count
 #define MINITERS 60
 
-// Gaussian blur after computation, can look "nicer"
-#define GAUSSIANBLUR 1
+// Initial value for gaussian blur after mandelbrot computation, can be toggled at runtime
+#define DEFAULTGAUSSIANBLUR 1
 
 // Number of colour steps
 #define COLOURPERIOD 128
