@@ -58,7 +58,7 @@ int SetUpOpenGL(GLFWwindow **window, const int xRes, const int yRes,
 
 #ifdef WITHOPENCL
 // OpenCL Stuff
-int InitialiseCLEnvironment(cl_platform_id**, cl_device_id***, cl_context*, cl_command_queue*, cl_program*, GLFWwindow *window);
+int InitialiseCLEnvironment(cl_platform_id**, cl_device_id***, cl_program*, renderStruct *render);
 void CleanUpCLEnvironment(cl_platform_id**, cl_device_id***, cl_context*, cl_command_queue*, cl_program*);
 
 char *kernelFileName = "src/mandelbrotKernel.cl";
@@ -103,10 +103,11 @@ int main(void)
 	SetInitialValues(&image);
 	// Allocate array of floats which represent the pixels. 3 floats per pixel for RGB.
 	image.pixels = malloc(image.xRes * image.yRes * sizeof *(image.pixels) *3);
-	// Update OpenGL texture on render
-	render.updateTex = 1;
 	// Gaussian blur after computation
 	image.gaussianBlur = DEFAULTGAUSSIANBLUR;
+
+	// Update OpenGL texture on render. This is disabled when rendering high resolution images
+	render.updateTex = 1;
 
 
 	// OpenGL variables and setup
@@ -126,19 +127,29 @@ int main(void)
 	render.localSize = OPENCLLOCALSIZE;
 	assert(render.globalSize % render.localSize == 0);
 
-	if (InitialiseCLEnvironment(&platform, &device_id, &(render.contextCL), &(render.queue), &program, render.window) == EXIT_FAILURE) {
+	// Initially set variable that controls interop of OpenGL and OpenCL to 0, set to 1 if
+	// interop device found successfully
+	render.glclInterop = 0;
+
+	if (InitialiseCLEnvironment(&platform, &device_id, &program, &render) == EXIT_FAILURE) {
 		printf("Error initialising OpenCL environment\n");
 		return EXIT_FAILURE;
 	}
 	size_t sizeBytes = image.xRes * image.yRes * 3 * sizeof(float);
 	render.pixelsDevice = clCreateBuffer(render.contextCL, CL_MEM_READ_WRITE, sizeBytes, NULL, &err);
+	// if we aren't using interop, allocate another buffer on the device for output, on the pointer
+	// for the texture
+	if (render.glclInterop == 0) {
+		render.pixelsTex = clCreateBuffer(render.contextCL, CL_MEM_READ_WRITE, sizeBytes, NULL, &err);
+	}
 
-
-	// finish texture initialization so that we can use with OpenCL
+	// finish texture initialization so that we can use with OpenCL if glclInterop
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image.xRes, image.yRes, 0, GL_RGB, GL_FLOAT, image.pixels);
 	// Configure image from OpenGL texture "tex"
-	render.pixelsTex = clCreateFromGLTexture(render.contextCL, CL_MEM_WRITE_ONLY, GL_TEXTURE_2D, 0, tex, &err);
-	CheckOpenCLError(err, __LINE__);
+	if (render.glclInterop) {
+		render.pixelsTex = clCreateFromGLTexture(render.contextCL, CL_MEM_WRITE_ONLY, GL_TEXTURE_2D, 0, tex, &err);
+		CheckOpenCLError(err, __LINE__);
+	}
 
 
 	// Create kernels
@@ -666,7 +677,7 @@ void SetInitialValues(imageStruct *image)
 
 #ifdef WITHOPENCL
 // OpenCL functions
-int InitialiseCLEnvironment(cl_platform_id **platform, cl_device_id ***device_id, cl_context *context, cl_command_queue *queue, cl_program *program, GLFWwindow *window)
+int InitialiseCLEnvironment(cl_platform_id **platform, cl_device_id ***device_id, cl_program *program, renderStruct *render)
 {
 	//error flag
 	cl_int err;
@@ -727,51 +738,84 @@ int InitialiseCLEnvironment(cl_platform_id **platform, cl_device_id ***device_id
 	////////////////////////////////
 	// This part is different to how we usually do things. Need to get context and device from existing
 	// OpenGL context. Loop through all platforms looking for the device:
-	cl_device_id glDevice;
+	cl_device_id device = NULL;
 	int deviceFound = 0;
 	int checkPlatform = 0;
 
+#ifdef TRYINTEROP
 	while (!deviceFound) {
 		printf("---OpenCL: Looking for OpenGL Context device on platform %d ... ", checkPlatform);
 		clGetGLContextInfoKHR_fn pclGetGLContextInfoKHR = (clGetGLContextInfoKHR_fn) clGetExtensionFunctionAddressForPlatform((*platform)[checkPlatform], "clGetGLContextInfoKHR");
 		cl_context_properties properties[] = {
-			CL_GL_CONTEXT_KHR, (cl_context_properties) glfwGetGLXContext(window),
+			CL_GL_CONTEXT_KHR, (cl_context_properties) glfwGetGLXContext(render->window),
 			CL_GLX_DISPLAY_KHR, (cl_context_properties) glfwGetX11Display(),
 			CL_CONTEXT_PLATFORM, (cl_context_properties) (*platform)[checkPlatform],
 			0};
-		err = pclGetGLContextInfoKHR(properties, CL_CURRENT_DEVICE_FOR_GL_CONTEXT_KHR, sizeof(cl_device_id), &glDevice, NULL);
+		err = pclGetGLContextInfoKHR(properties, CL_CURRENT_DEVICE_FOR_GL_CONTEXT_KHR, sizeof(cl_device_id), &device, NULL);
 		if (err != CL_SUCCESS) {
 			printf("Not Found.\n");
 			checkPlatform++;
 			if (checkPlatform > numPlatforms-1) {
 				printf("---OpenCL: Error! Could not find OpenGL sharing device.\n");
-				return EXIT_FAILURE;
 			}
 		}
 		else {
 			printf("Found!\n");
 			deviceFound = 1;
+			render->glclInterop = 1;
 		}
 	}
 
-	cl_context_properties properties[] = {
-		CL_GL_CONTEXT_KHR, (cl_context_properties) glfwGetGLXContext(window),
-		CL_GLX_DISPLAY_KHR, (cl_context_properties) glfwGetX11Display(),
-		CL_CONTEXT_PLATFORM, (cl_context_properties) (*platform)[checkPlatform],
-		0};
-	*context = clCreateContext(properties, 1, &glDevice, NULL, 0, &err);
-	CheckOpenCLError(err, __LINE__);
-	
-	// create a command queue
-	*queue = clCreateCommandQueue(*context, glDevice, 0, &err);
-	CheckOpenCLError(err, __LINE__);
+	if (render->glclInterop) {
+		cl_context_properties properties[] = {
+			CL_GL_CONTEXT_KHR, (cl_context_properties) glfwGetGLXContext(render->window),
+			CL_GLX_DISPLAY_KHR, (cl_context_properties) glfwGetX11Display(),
+			CL_CONTEXT_PLATFORM, (cl_context_properties) (*platform)[checkPlatform],
+			0};
+		render->contextCL = clCreateContext(properties, 1, &device, NULL, 0, &err);
+		CheckOpenCLError(err, __LINE__);
+	}
+#endif
+
+	// if render->glclInterop is 0, either we are not trying to use it, or we couldn't find an interop
+	// device. In this case, have the user choose a platform and device manually.
+	if (!(render->glclInterop)) {
+		printf("Choose a platform and device.\n");
+		checkPlatform = -1;
+		while (checkPlatform < 0) {
+			printf("Platform: ");
+			scanf("%d", &checkPlatform);
+			if (checkPlatform > numPlatforms-1) {
+				printf("Invalid Platform choice.\n");
+				checkPlatform = -1;
+			}
+		}
+
+		int chooseDevice = -1;
+		while (chooseDevice < 0) {
+			printf("Device: ");
+			scanf("%d", &chooseDevice);
+			if (chooseDevice > numDevices[checkPlatform]) {
+				printf("Invalid Device choice.\n");
+				chooseDevice = -1;
+			}
+		}
+
+		// Create non-interop context
+		render->contextCL = clCreateContext(NULL, 1, &((*device_id)[checkPlatform][chooseDevice]), NULL, NULL, &err);
+		device = (*device_id)[checkPlatform][chooseDevice];
+	}
 	////////////////////////////////
 
+
+	// create a command queue
+	render->queue = clCreateCommandQueue(render->contextCL, device, 0, &err);
+	CheckOpenCLError(err, __LINE__);
 
 
 	//create the program with the source above
 //	printf("Creating CL Program...\n");
-	*program = clCreateProgramWithSource(*context, 1, (const char**)&kernelSource, NULL, &err);
+	*program = clCreateProgramWithSource(render->contextCL, 1, (const char**)&kernelSource, NULL, &err);
 	if (err != CL_SUCCESS) {
 		printf("Error in clCreateProgramWithSource: %d, line %d.\n", err, __LINE__);
 		return EXIT_FAILURE;
@@ -782,7 +826,7 @@ int InitialiseCLEnvironment(cl_platform_id **platform, cl_device_id ***device_id
 	if (err != CL_SUCCESS) {
 		printf("Error in clBuildProgram: %d, line %d.\n", err, __LINE__);
 		char buffer[5000];
-		clGetProgramBuildInfo(*program, glDevice, CL_PROGRAM_BUILD_LOG, sizeof(buffer), buffer, NULL);
+		clGetProgramBuildInfo(*program, device, CL_PROGRAM_BUILD_LOG, sizeof(buffer), buffer, NULL);
 		printf("%s\n", buffer);
 		return EXIT_FAILURE;
 	}

@@ -8,7 +8,7 @@ all:
 
 gmp:
 	mkdir -p bin
-	gcc -o bin/mandelbrot -DWITHGMP $(source) -std=gnu99 -O3 -fno-unsafe-math-optimizations -fopenmp -lgmp -lrt -lglfw -lGL -lm -lXrandr -lXi -lX11 -lXxf86vm -lpthread -lGLEW $(freeimae) -Wall -pedantic -g
+	gcc -o bin/mandelbrot -DWITHGMP $(source) -std=gnu99 -O3 -fno-unsafe-math-optimizations -fopenmp -lgmp -lrt -lglfw -lGL -lm -lXrandr -lXi -lX11 -lXxf86vm -lpthread -lGLEW $(freeimage) -Wall -pedantic -g
 
 avx:
 	mkdir -p bin

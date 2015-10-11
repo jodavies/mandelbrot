@@ -37,5 +37,6 @@ typedef struct {
 	cl_mem pixelsTex;
 	size_t globalSize;
 	size_t localSize;
+	int glclInterop;
 #endif
 } renderStruct;

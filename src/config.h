@@ -36,6 +36,14 @@
 // Test if point is inside cardioid or period-2 bulb, and if so, bail early
 #define EARLYBAIL 1
 
+
+// // GMP
+// Number of bits to use for multiple precision floats
+#define GMPPRECISION 256
+
+
 // // OpenCL
 // workgroup size:
 #define OPENCLLOCALSIZE 64
+// attempt opengl opencl interop?
+#define TRYINTEROP 1
