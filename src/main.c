@@ -44,7 +44,7 @@ void SetInitialValues(imageStruct *image);
 // Smoothly zoom from one configuration to another, drawing interpolated frames.
 void SmoothZoom(renderStruct *render, imageStruct *image, RenderMandelbrotPtr RenderMandelbrot,
                 const double xReleasePos, const double yReleasePos,
-                const double zoomFactor, const double itersFactor, const int zoomSteps);
+                const double zoomFactor, const double itersFactor);
 
 #ifdef WITHFREEIMAGE
 // Make a high-resolution render of the current view, and save to disk as bmp with FreeImage library
@@ -68,7 +68,7 @@ char *kernelFileName = "src/mandelbrotKernel.cl";
 int main(void)
 {
 	printf("\n"
-	       "Controls:  - Left/Right Click to zoom in/out, centreing on cursor position.\n"
+	       "Controls:  - Left/Right Click to zoom in/out, centring on cursor position.\n"
 	       "           - Left Click and Drag to pan.\n"
 	       "           - r to reset view.\n"
 	       "           - q,w to decrease, increase max iteration count\n"
@@ -101,13 +101,10 @@ int main(void)
 	image.yRes = YRESOLUTION;
 	// Initial values for boundaries, iteration count
 	SetInitialValues(&image);
-	// Allocate array of floats which represent the pixels. 3 floats per pixel for RGB.
-	image.pixels = malloc(image.xRes * image.yRes * sizeof *(image.pixels) *3);
-	// Gaussian blur after computation
-	image.gaussianBlur = DEFAULTGAUSSIANBLUR;
-
 	// Update OpenGL texture on render. This is disabled when rendering high resolution images
 	render.updateTex = 1;
+	// Allocate host memory, used to set up OpenGL texture, even if we are using interop OpenCL
+	image.pixels = malloc(image.xRes * image.yRes * sizeof *(image.pixels) *3);
 
 
 	// OpenGL variables and setup
@@ -191,7 +188,7 @@ int main(void)
 		}
 
 
-		// if user left-clicks in window, zoom in, centering on cursor position
+		// if user left-clicks in window, zoom in, centring on cursor position
 		// if click and drag, simply re-position centre without zooming
 		else if (glfwGetMouseButton(render.window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
 
@@ -232,12 +229,12 @@ int main(void)
 
 			// else, zoom in smoothly over ZOOMSTEPS frames
 			if (!shift) {
-				SmoothZoom(&render, &image, RenderMandelbrot, xReleasePos, yReleasePos, ZOOMFACTOR, ITERSFACTOR, ZOOMSTEPS);
+				SmoothZoom(&render, &image, RenderMandelbrot, xReleasePos, yReleasePos, ZOOMFACTOR, ITERSFACTOR);
 			}
 		}
 
 
-		// if user right-clicks in window, zoom out, centering on cursor position
+		// if user right-clicks in window, zoom out, centring on cursor position
 		else if (glfwGetMouseButton(render.window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
 			while (glfwGetMouseButton(render.window, GLFW_MOUSE_BUTTON_RIGHT) != GLFW_RELEASE) {
 				glfwPollEvents();
@@ -248,7 +245,7 @@ int main(void)
 			glfwGetCursorPos(render.window, &xReleasePos, &yReleasePos);
 
 			// Zooming out, so use 1/FACTORs.
-			SmoothZoom(&render, &image, RenderMandelbrot, xReleasePos, yReleasePos, 1.0/ZOOMFACTOR, 1.0/ITERSFACTOR, ZOOMSTEPS);
+			SmoothZoom(&render, &image, RenderMandelbrot, xReleasePos, yReleasePos, 1.0/ZOOMFACTOR, 1.0/ITERSFACTOR);
 		}
 
 
@@ -359,13 +356,14 @@ int main(void)
 
 
 		// if user presses "h", render a high resolution version of the current view, and
-		// save it to disk as a bitmap
+		// save it to disk as an image
 		else if (glfwGetKey(render.window, GLFW_KEY_H) == GLFW_PRESS) {
 			while (glfwGetKey(render.window, GLFW_KEY_H) != GLFW_RELEASE) {
 				glfwPollEvents();
 			}
 			double startTime = GetWallTime();
-			printf("Saving high resolution bitmap...\n");
+			printf("Saving high resolution (%d x %d) image...\n",
+			       image.xRes*HIGHRESOLUTIONMULTIPLIER, image.yRes*HIGHRESOLUTIONMULTIPLIER);
 			HighResolutionRender(&render, &image, RenderMandelbrot);
 			printf("   --- done. Total time: %lfs\n", GetWallTime()-startTime);
 		}
@@ -388,7 +386,6 @@ int main(void)
 	// Close OpenGL window and terminate GLFW
 	glfwDestroyWindow(render.window);
 	glfwTerminate();
-
 
 	// Free dynamically allocated memory
 	free(image.pixels);
@@ -424,7 +421,7 @@ void RunBenchmark(renderStruct *render, imageStruct *image, RenderMandelbrotPtr 
 
 void SmoothZoom(renderStruct *render, imageStruct *image, RenderMandelbrotPtr RenderMandelbrot,
                 const double xReleasePos, const double yReleasePos,
-                const double zoomFactor, const double itersFactor, const int zoomSteps)
+                const double zoomFactor, const double itersFactor)
 {
 	// Determine new centre
 	const double xCentreNew = (xReleasePos/(double)image->xRes*(image->xMax-image->xMin) + image->xMin);
@@ -442,13 +439,11 @@ void SmoothZoom(renderStruct *render, imageStruct *image, RenderMandelbrotPtr Re
 	// Store old maxIters value
 	const int maxItersOld = image->maxIters;
 
-	// print coords?
-//	printf("New image: (%.16lf,%.16lf),(%.16lf,%.16lf): %d\n", xMinNew, xMaxNew, yMinNew, yMaxNew, (int)((double)maxItersOld*itersFactor));
 
-	// Zoom into new position in ZOOMSTEPS steps, interpolating between old and
-	// new boundaries
-	for (int i = 1; i <= zoomSteps; i++) {
-		double t = INTERPFUNC(i);
+	// Zoom into new position in ZOOMSTEPS steps, interpolating between old and new boundaries.
+	double time = GetWallTime();
+	for (int i = 1; i <= image->zoomSteps; i++) {
+		double t = INTERPFUNC((double)i/(double)image->zoomSteps);
 		image->xMin = xMinOld + (xMinNew - xMinOld)*t;
 		image->xMax = xMaxOld + (xMaxNew - xMaxOld)*t;
 		image->yMin = yMinOld + (yMinNew - yMinOld)*t;
@@ -461,6 +456,17 @@ void SmoothZoom(renderStruct *render, imageStruct *image, RenderMandelbrotPtr Re
 		glfwSwapBuffers(render->window);
 	}
 
+	// Want zoom to take ~half a second, so if it is taking too much or too little time,
+	// adjust image->zoomSteps to compensate.
+	time = GetWallTime() - time;
+	if (time > 0.75) {
+		int newZoomSteps = (int)fmax(1.0, (0.5/time * image->zoomSteps));
+		image->zoomSteps = newZoomSteps;
+	}
+	else if (time < 0.25) {
+		int newZoomSteps = (int)fmin(INITIALZOOMSTEPS, (0.5/time * image->zoomSteps));
+		image->zoomSteps = newZoomSteps;
+	}
 }
 
 
@@ -471,39 +477,113 @@ void HighResolutionRender(renderStruct *render, imageStruct *image, RenderMandel
 	// Set new resolution
 	image->xRes = image->xRes*HIGHRESOLUTIONMULTIPLIER;
 	image->yRes = image->yRes*HIGHRESOLUTIONMULTIPLIER;
+
 	//Set updateTex flag to 0 so we don't try to draw it on screen.
 	render->updateTex = 0;
-	// Allocate new pixels array of larger size:
+
+	// Allocate new host pixels array of larger size. We need this regardless of interop
 	free(image->pixels);
-	size_t allocSize = image->xRes * image->yRes * sizeof *(image->pixels) *3;
-	printf("   --- reallocating pixels array: %.2lfMB\n", allocSize/1024.0/1024.0);
+	// CAREFUL: these sizes can easily overflow a 32bit int. Use uint64_t
+	uint64_t allocSize = image->xRes * image->yRes * sizeof*(image->pixels) *3;
+	printf("   --- reallocating host pixels array: %.2lfMB\n", allocSize/1024.0/1024.0);
 	image->pixels = malloc(allocSize);
 
 
 #ifdef WITHOPENCL
-	// With openCL, need to allocate a new device buffer for output. Store the pointer to the OpenGL
-	// texture, and allocate a new device array on this pointer for the output array.
+	// Here, it is likely that the array(s) of colour values will not fit in device global memory.
+	// We have to render the frame in tiles, each of which fits.
+	//
+	// OpenCL platform gives us a max allocation, which is "at least" 1/4 of the memory size. We
+	// can't therefore, allocate two arrays of the max allocation -- they are not guaranteed to fit.
+	// We allocate two arrays, each half the max allocation.
 	cl_int err;
-	cl_mem storepixelsTex = render->pixelsTex;
-	clReleaseMemObject(render->pixelsDevice);
-	printf("   --- reallocating device arrays: %.2lfMB\n", 2.0*allocSize/1024.0/1024.0);
-	render->pixelsDevice = clCreateBuffer(render->contextCL, CL_MEM_READ_WRITE, allocSize, NULL, &err);
-	render->pixelsTex = clCreateBuffer(render->contextCL, CL_MEM_READ_WRITE, allocSize, NULL, &err);
-	render->globalSize = image->xRes * image->yRes;
-	RenderMandelbrot(render, image);
-	size_t readSize = image->xRes * image->yRes * sizeof *(image->pixels) * 3;
-	clEnqueueReadBuffer(render->queue, render->pixelsTex, CL_TRUE, 0, readSize, image->pixels, 0, NULL, NULL);
+
+	// Determine the size (in bytes) of one row of pixels
+	uint64_t rowSize = image->xRes * sizeof *(image->pixels) * 3;
+
+	// Determine how many rows we can fit in half the max allocation
+	uint64_t maxAllocRows = (render->deviceMaxAlloc/2) / rowSize;
+
+	// The number of tiles required to render the frame:
+	int tiles = (int)ceil((double)image->yRes/(double)maxAllocRows);
+	// Size of a single tile
+	uint64_t fullTileSize = maxAllocRows * rowSize;
+
+	// Allocate tile-sized global memory arrays on device.
+	// Store handle to OpenGL texture so it can be recovered later.
+	// The struct variable will be reassigned, this makes running the kernels simpler.
+	cl_mem keepPixelsTex = render->pixelsTex;
+	// Release the existing pixels array
+	err = clReleaseMemObject(render->pixelsDevice);
+	CheckOpenCLError(err, __LINE__);
+	// Allocate new arrays
+	printf("   --- allocating tile arrays on device: %lfMB\n", 2.0*fullTileSize/1024.0/1024.0);
+	render->pixelsDevice = clCreateBuffer(render->contextCL, CL_MEM_READ_WRITE, fullTileSize, NULL, &err);
+	CheckOpenCLError(err, __LINE__);
+	render->pixelsTex = clCreateBuffer(render->contextCL, CL_MEM_READ_WRITE, fullTileSize, NULL, &err);
+	CheckOpenCLError(err, __LINE__);
+
+	// Store full image resolution and boundaries, we will adjust the values in the struct
+	int yResFull = image->yRes;
+	double yMinFull = image->yMin;
+	double yMaxFull = image->yMax;
+
+
+	// Render tiles, and copy data back to the host array
+	for (int t = 0; t < tiles; t++) {
+		printf("   --- computing tile %d/%d...\n", t+1, tiles);
+
+		// Set tile resolution. Each has maxAllocRows apart from the last,
+		// which might have fewer as it contains the remainder.
+		image->yRes = maxAllocRows;
+		if (t == tiles-1) {
+			image->yRes = yResFull % maxAllocRows;
+		}
+		// Reset global size, as the resolution has changed
+		render->globalSize = image->yRes * image->xRes;
+		assert(render->globalSize % render->localSize == 0);
+
+		// Set tile boundaries. We are computing a fraction maxAllocRows/yResFull of the full
+		//image, starting at the beginning of the t-th tile. The final tile uses xMaxFull for xMax.
+		image->yMin = yMinFull + t*((double)maxAllocRows/(double)yResFull)*(yMaxFull-yMinFull);
+		image->yMax = yMinFull + (t+1)*((double)maxAllocRows/(double)yResFull)*(yMaxFull-yMinFull);
+		if (t == tiles-1) {
+			image->yMax = yMaxFull;
+		}
+
+		// Render
+		RenderMandelbrot(render, image);
+
+		// Copy data from render->pixelsTex (the output of GaussianBlurKernel2)
+		uint64_t storeOffset = t * (maxAllocRows * image->xRes * 3);
+		// The final tile is smaller
+		if (t == tiles-1) {
+			fullTileSize = image->yRes * image->xRes * sizeof *(image->pixels) * 3;
+		}
+		err = clEnqueueReadBuffer(render->queue, render->pixelsTex, CL_TRUE, 0, fullTileSize,
+		                          &(image->pixels[storeOffset]), 0, NULL, NULL);
+		CheckOpenCLError(err, __LINE__);
+	}
+
+	// Reset image boundaries and resolution
+	image->yRes = yResFull;
+	image->yMin = yMinFull;
+	image->yMax = yMaxFull;
+
 
 #else
+	// If not using OpenCL, simply render directly onto the reallocated image->pixels array
 	RenderMandelbrot(render, image);
 #endif
 
 
-	// Save bitmap
+	// Save png
+	printf("   --- creating png...\n");
 	// Create raw pixel array
 	GLubyte * rawPixels;
-	rawPixels = malloc(image->xRes * image->yRes * sizeof *rawPixels *3);
-	for (int i = 0; i < image->xRes*image->yRes*3; i+=3) {
+	uint64_t rawAllocSize = image->xRes * image->yRes * sizeof *rawPixels *3;
+	rawPixels = malloc(rawAllocSize);
+	for (uint64_t i = 0; i < image->xRes*image->yRes*3; i+=3) {
 		// note change in order, rgb -> bgr!
 		rawPixels[i+0] = (GLubyte)((image->pixels)[i+2]*255);
 		rawPixels[i+1] = (GLubyte)((image->pixels)[i+1]*255);
@@ -524,11 +604,17 @@ void HighResolutionRender(renderStruct *render, imageStruct *image, RenderMandel
 	image->pixels = malloc(image->xRes * image->yRes * sizeof *(image->pixels) *3);
 
 #ifdef WITHOPENCL
+	// Release large global memory buffers
 	clReleaseMemObject(render->pixelsDevice);
 	clReleaseMemObject(render->pixelsTex);
-	render->pixelsTex = storepixelsTex;
+	// Recover handle to OpenGL texture
+	render->pixelsTex = keepPixelsTex;
 	size_t allocSizeOrig = image->xRes * image->yRes * 3 * sizeof *(image->pixels);
 	render->pixelsDevice = clCreateBuffer(render->contextCL, CL_MEM_READ_WRITE, allocSizeOrig, NULL, &err);
+	CheckOpenCLError(err, __LINE__);
+	// Reset global size, as the resolution has changed
+	render->globalSize = image->yRes * image->xRes;
+	assert(render->globalSize % render->localSize == 0);
 #endif
 
 }
@@ -672,6 +758,12 @@ void SetInitialValues(imageStruct *image)
 	// set y limits based on aspect ratio
 	image->yMin = -(image->xMax-image->xMin)/2.0*((double)image->yRes/(double)image->xRes);
 	image->yMax =  (image->xMax-image->xMin)/2.0*((double)image->yRes/(double)image->xRes);
+
+	// Gaussian blur after computation
+	image->gaussianBlur = DEFAULTGAUSSIANBLUR;
+
+	// Intermediate frames for SmoothZoom function
+	image->zoomSteps = INITIALZOOMSTEPS;
 }
 
 
@@ -679,9 +771,14 @@ void SetInitialValues(imageStruct *image)
 // OpenCL functions
 int InitialiseCLEnvironment(cl_platform_id **platform, cl_device_id ***device_id, cl_program *program, renderStruct *render)
 {
-	//error flag
+	// error flag
 	cl_int err;
 	char infostring[1024];
+	char deviceInfo[1024];
+
+	// need to ensure platform supports OpenGL OpenCL interop before querying devices
+	// to avoid segfault when calling clGetGLContextInfoKHR
+	int *platformSupportsInterop;
 
 	//get kernel from file
 	FILE* kernelFile = fopen(kernelFileName, "rb");
@@ -698,6 +795,7 @@ int InitialiseCLEnvironment(cl_platform_id **platform, cl_device_id ***device_id
 	err = clGetPlatformIDs(0, NULL, &numPlatforms);
 	*platform = malloc(numPlatforms * sizeof(cl_platform_id));
 	*device_id = malloc(numPlatforms * sizeof(cl_device_id*));
+	platformSupportsInterop = malloc(numPlatforms * sizeof(*platformSupportsInterop));
 	err |= clGetPlatformIDs(numPlatforms, *platform, NULL);
 	CheckOpenCLError(err, __LINE__);
 	cl_uint *numDevices;
@@ -710,26 +808,28 @@ int InitialiseCLEnvironment(cl_platform_id **platform, cl_device_id ***device_id
 		err = clGetDeviceIDs((*platform)[i], CL_DEVICE_TYPE_ALL, 0, NULL, &(numDevices[i]));
 		CheckOpenCLError(err, __LINE__);
 		(*device_id)[i] = malloc(numDevices[i] * sizeof(cl_device_id));
+		platformSupportsInterop[i] = 0;
 		err = clGetDeviceIDs((*platform)[i], CL_DEVICE_TYPE_ALL, numDevices[i], (*device_id)[i], NULL);
 		CheckOpenCLError(err, __LINE__);
 		for (int j = 0; j < numDevices[i]; j++) {
 			char deviceName[200];
 			clGetDeviceInfo((*device_id)[i][j], CL_DEVICE_NAME, sizeof(deviceName), deviceName, NULL);
 			printf("---OpenCL:    Device found %d. %s\n", j, deviceName);
-			char deviceInfo[1024];
 			clGetDeviceInfo((*device_id)[i][j], CL_DEVICE_EXTENSIONS, sizeof(deviceInfo), deviceInfo, NULL);
 			if (strstr(deviceInfo, "cl_khr_gl_sharing") != NULL) {
 				printf("---OpenCL:        cl_khr_gl_sharing supported!\n");
+				platformSupportsInterop[i] = 1;
 			}
 			else {
 				printf("---OpenCL:        cl_khr_gl_sharing NOT supported!\n");
+				platformSupportsInterop[i] |= 0;
 			}
-//			cl_ulong maxAlloc;
-//			clGetDeviceInfo((*device_id)[i][j], CL_DEVICE_MAX_MEM_ALLOC_SIZE, sizeof(maxAlloc), &maxAlloc, NULL);
-//			printf("---OpenCL:       CL_DEVICE_MAX_MEM_ALLOC_SIZE: %lu MB\n", maxAlloc/1024/1024);
-//			cl_uint cacheLineSize;
-//			clGetDeviceInfo((*device_id)[i][j], CL_DEVICE_GLOBAL_MEM_CACHELINE_SIZE, sizeof(cacheLineSize), &cacheLineSize, NULL);
-//			printf("---OpenCL:       CL_DEVICE_GLOBAL_MEM_CACHELINE_SIZE: %u B\n", cacheLineSize);
+			if (strstr(deviceInfo, "cl_khr_fp64") != NULL) {
+				printf("---OpenCL:        cl_khr_fp64 supported!\n");
+			}
+			else {
+				printf("---OpenCL:        cl_khr_fp64 NOT supported!\n");
+			}
 		}
 	}
 	printf("\n");
@@ -744,41 +844,53 @@ int InitialiseCLEnvironment(cl_platform_id **platform, cl_device_id ***device_id
 
 #ifdef TRYINTEROP
 	while (!deviceFound) {
-		printf("---OpenCL: Looking for OpenGL Context device on platform %d ... ", checkPlatform);
-		clGetGLContextInfoKHR_fn pclGetGLContextInfoKHR = (clGetGLContextInfoKHR_fn) clGetExtensionFunctionAddressForPlatform((*platform)[checkPlatform], "clGetGLContextInfoKHR");
-		cl_context_properties properties[] = {
-			CL_GL_CONTEXT_KHR, (cl_context_properties) glfwGetGLXContext(render->window),
-			CL_GLX_DISPLAY_KHR, (cl_context_properties) glfwGetX11Display(),
-			CL_CONTEXT_PLATFORM, (cl_context_properties) (*platform)[checkPlatform],
-			0};
-		err = pclGetGLContextInfoKHR(properties, CL_CURRENT_DEVICE_FOR_GL_CONTEXT_KHR, sizeof(cl_device_id), &device, NULL);
-		if (err != CL_SUCCESS) {
-			printf("Not Found.\n");
-			checkPlatform++;
-			if (checkPlatform > numPlatforms-1) {
-				printf("---OpenCL: Error! Could not find OpenGL sharing device.\n");
+		if (platformSupportsInterop[checkPlatform]) {
+			printf("---OpenCL: Looking for OpenGL Context device on platform %d ... ", checkPlatform);
+			clGetGLContextInfoKHR_fn pclGetGLContextInfoKHR = (clGetGLContextInfoKHR_fn) clGetExtensionFunctionAddressForPlatform((*platform)[checkPlatform], "clGetGLContextInfoKHR");
+			cl_context_properties properties[] = {
+				CL_GL_CONTEXT_KHR, (cl_context_properties) glfwGetGLXContext(render->window),
+				CL_GLX_DISPLAY_KHR, (cl_context_properties) glfwGetX11Display(),
+				CL_CONTEXT_PLATFORM, (cl_context_properties) (*platform)[checkPlatform],
+				0};
+			err = pclGetGLContextInfoKHR(properties, CL_CURRENT_DEVICE_FOR_GL_CONTEXT_KHR, sizeof(cl_device_id), &device, NULL);
+			if (err != CL_SUCCESS) {
+				printf("Not Found.\n");
+				checkPlatform++;
+				if (checkPlatform > numPlatforms-1) {
+					printf("---OpenCL: Error! Could not find OpenGL sharing device.\n");
+					deviceFound = 1;
+					render->glclInterop = 0;
+				}
 			}
-		}
-		else {
-			printf("Found!\n");
-			deviceFound = 1;
-			render->glclInterop = 1;
+			else {
+				printf("Found!\n");
+				deviceFound = 1;
+				render->glclInterop = 1;
+			}
 		}
 	}
 
 	if (render->glclInterop) {
-		cl_context_properties properties[] = {
-			CL_GL_CONTEXT_KHR, (cl_context_properties) glfwGetGLXContext(render->window),
-			CL_GLX_DISPLAY_KHR, (cl_context_properties) glfwGetX11Display(),
-			CL_CONTEXT_PLATFORM, (cl_context_properties) (*platform)[checkPlatform],
-			0};
-		render->contextCL = clCreateContext(properties, 1, &device, NULL, 0, &err);
-		CheckOpenCLError(err, __LINE__);
+		// Check the device we've found supports double precision
+		clGetDeviceInfo(device, CL_DEVICE_EXTENSIONS, sizeof(deviceInfo), deviceInfo, NULL);
+		if (strstr(deviceInfo, "cl_khr_fp64") == NULL) {
+			printf("---OpenCL: Interop device doesn't support double precision! We cannot use it.\n");
+		}
+		else {
+			cl_context_properties properties[] = {
+				CL_GL_CONTEXT_KHR, (cl_context_properties) glfwGetGLXContext(render->window),
+				CL_GLX_DISPLAY_KHR, (cl_context_properties) glfwGetX11Display(),
+				CL_CONTEXT_PLATFORM, (cl_context_properties) (*platform)[checkPlatform],
+				0};
+			render->contextCL = clCreateContext(properties, 1, &device, NULL, 0, &err);
+			CheckOpenCLError(err, __LINE__);
+		}
 	}
 #endif
 
-	// if render->glclInterop is 0, either we are not trying to use it, or we couldn't find an interop
-	// device. In this case, have the user choose a platform and device manually.
+	// if render->glclInterop is 0, either we are not trying to use it, we couldn't find an interop
+	// device, or we found an interop device but it doesn't support double precision.
+	// In these cases, have the user choose a platform and device manually.
 	if (!(render->glclInterop)) {
 		printf("Choose a platform and device.\n");
 		checkPlatform = -1;
@@ -799,6 +911,12 @@ int InitialiseCLEnvironment(cl_platform_id **platform, cl_device_id ***device_id
 				printf("Invalid Device choice.\n");
 				chooseDevice = -1;
 			}
+			// Check the device we've chosen supports double precision
+			clGetDeviceInfo((*device_id)[checkPlatform][chooseDevice], CL_DEVICE_EXTENSIONS, sizeof(deviceInfo), deviceInfo, NULL);
+			if (strstr(deviceInfo, "cl_khr_fp64") == NULL) {
+				printf("---OpenCL: Interop device doesn't support double precision! We cannot use it.\n");
+				chooseDevice = -1;
+			}
 		}
 
 		// Create non-interop context
@@ -807,6 +925,12 @@ int InitialiseCLEnvironment(cl_platform_id **platform, cl_device_id ***device_id
 	}
 	////////////////////////////////
 
+	// device is now fixed. Query its max global memory allocation size and store it, used in
+	// HighResolutionRender routine, to determine into how many tiles we need to split the
+	// computation.
+	clGetDeviceInfo(device, CL_DEVICE_MAX_MEM_ALLOC_SIZE, sizeof(render->deviceMaxAlloc), &(render->deviceMaxAlloc), NULL);
+	printf("---OpenCL: Selected device has CL_DEVICE_MAX_MEM_ALLOC_SIZE: %lfMB\n",
+	       render->deviceMaxAlloc/1024.0/1024.0);
 
 	// create a command queue
 	render->queue = clCreateCommandQueue(render->contextCL, device, 0, &err);
@@ -843,6 +967,7 @@ int InitialiseCLEnvironment(cl_platform_id **platform, cl_device_id ***device_id
 
 	free(numDevices);
 	free(kernelSource);
+	printf("\n");
 	return EXIT_SUCCESS;
 }
 #endif

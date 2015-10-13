@@ -7,18 +7,19 @@
 //#define FULLSCREEN 1
 
 // Resolution multiplier to use for high-resolution render, to save as bitmap
-#define HIGHRESOLUTIONMULTIPLIER 7
+#define HIGHRESOLUTIONMULTIPLIER 20
 
 
-// For smooth zoom in and out, the number of interpolated frames to render
-#define ZOOMSTEPS 20
+// For smooth zoom in and out, the initial number of interpolated frames to render.
+// Auto adjusted to maintain framerate
+#define INITIALZOOMSTEPS 30
 // Zoom factor per user zoom-in/out request
 #define ZOOMFACTOR 2.0
 // How much to increase/decrease the maxIters variable for zoom-in/out
 #define ITERSFACTOR 1.2
 // Interpolate linearly or according to a steep, shifted logistic function:
-//#define INTERPFUNC(i) ((double)i/(double)ZOOMSTEPS)
-#define INTERPFUNC(i) (1.0/(1.0+exp(-10.0*((double)i/(double)ZOOMSTEPS - 0.5))))
+//#define INTERPFUNC(t) (t)
+#define INTERPFUNC(t) (1.0/(1.0+exp(-10.0*(t - 0.5))))
 
 // Number of pixels cursor has to move, with left button held down, to be considered
 // a drag, and pan the image:

@@ -14,8 +14,8 @@ __kernel void renderMandelbrotKernel(__global float * restrict pixels, const int
 
 	double u = 0.0, v = 0.0, uNew, vNew;
 	double uSq = 0.0, vSq = 0.0;
-	const double xPix = ((double)x/(double)xRes);
-	const double yPix = ((double)y/(double)yRes);
+	const double xPix = ( (double)x / (double)xRes );
+	const double yPix = ( (double)y / (double)yRes );
 	const double Rec = (1.0-xPix)*xMin + xPix*xMax;
 	const double Imc = (1.0-yPix)*yMin + yPix*yMax;
 

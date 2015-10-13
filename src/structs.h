@@ -18,6 +18,8 @@ typedef struct {
 	float * pixels;	// array of r,g,b colour values in [0.0,1.0].
 
 	int gaussianBlur;	// 1 or 0, for gaussian blur or not.
+
+	int zoomSteps;		// number of interpolated frames to render in SmoothZoom function
 } imageStruct;
 
 // This struct holds variables needed for rendering the image
@@ -38,5 +40,6 @@ typedef struct {
 	size_t globalSize;
 	size_t localSize;
 	int glclInterop;
+	size_t deviceMaxAlloc;
 #endif
 } renderStruct;
