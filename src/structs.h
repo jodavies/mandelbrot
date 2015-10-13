@@ -20,7 +20,12 @@ typedef struct {
 	int gaussianBlur;	// 1 or 0, for gaussian blur or not.
 
 	int zoomSteps;		// number of interpolated frames to render in SmoothZoom function
+
+	double colourPeriod;	// Number of diverging iterations in colour cycle.
+
 } imageStruct;
+
+
 
 // This struct holds variables needed for rendering the image
 typedef struct {
@@ -42,4 +47,5 @@ typedef struct {
 	int glclInterop;
 	size_t deviceMaxAlloc;
 #endif
+
 } renderStruct;

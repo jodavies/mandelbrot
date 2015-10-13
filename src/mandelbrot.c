@@ -1,7 +1,7 @@
 #include "mandelbrot.h"
 
 
-void SetPixelColour(const int iter, const int maxIters, float mag, float *r, float *g, float *b)
+void SetPixelColour(const int iter, const int maxIters, float mag, float *r, float *g, float *b, const double colourPeriod)
 {
 	// If pixel hit max iteration count, make it black
 	if (iter == maxIters) {
@@ -18,7 +18,7 @@ void SetPixelColour(const int iter, const int maxIters, float mag, float *r, flo
 	// earlier than their iteration count suggests.
 	// Then compute its mod with a number of colour steps, so that it cycles
 	// through the gradient repeatedly, and scale it between 0 and 1.
-	float smooth = fmod((iter -log(log(mag)/log(2.0f))),COLOURPERIOD)/COLOURPERIOD;
+	float smooth = fmod((iter -log(log(mag)/log(2.0f))),colourPeriod)/colourPeriod;
 
 	if (smooth < 0.25) {
 		*r = 0.0;
@@ -89,7 +89,8 @@ void RenderMandelbrotCPU(renderStruct *render, imageStruct *image)
 			}
 
 			SetPixelColour(iter, image->maxIters, uSq+vSq, &(image->pixels[y*image->xRes*3+x*3+0]),
-			               &(image->pixels[y*image->xRes*3+x*3+1]),&(image->pixels[y*image->xRes*3+x*3+2]));
+			               &(image->pixels[y*image->xRes*3+x*3+1]),&(image->pixels[y*image->xRes*3+x*3+2]),
+			               image->colourPeriod);
 
 		}
 	}
@@ -204,7 +205,8 @@ void RenderMandelbrotGMPCPU(renderStruct *render, imageStruct *image)
 			SetPixelColour(iter, image->maxIters, (float)mpf_get_d(mmag),
 			               &(image->pixels[y*image->xRes*3+x*3+0]),
 			               &(image->pixels[y*image->xRes*3+x*3+1]),
-			               &(image->pixels[y*image->xRes*3+x*3+2]));
+			               &(image->pixels[y*image->xRes*3+x*3+2]),
+			               image->colourPeriod);
 
 
 		}
@@ -355,7 +357,8 @@ void RenderMandelbrotAVXCPU(renderStruct *render, imageStruct *image)
 				SetPixelColour((int)(((double*)&viter)[k]), image->maxIters, ((double*)&vmagnitudeFinal)[k],
 							&(image->pixels[y*image->xRes*3+(x+k)*3+0]),
 							&(image->pixels[y*image->xRes*3+(x+k)*3+1]),
-							&(image->pixels[y*image->xRes*3+(x+k)*3+2]));
+							&(image->pixels[y*image->xRes*3+(x+k)*3+2]),
+							image->colourPeriod);
 			}
 
 		}
@@ -386,6 +389,7 @@ void RenderMandelbrotOpenCL(renderStruct *render, imageStruct *image)
 	err |= clSetKernelArg(render->renderMandelbrotKernel, 5, sizeof(double), &(image->yMin));
 	err |= clSetKernelArg(render->renderMandelbrotKernel, 6, sizeof(double), &(image->yMax));
 	err |= clSetKernelArg(render->renderMandelbrotKernel, 7, sizeof(int), &(image->maxIters));
+	err |= clSetKernelArg(render->renderMandelbrotKernel, 8, sizeof(double), &(image->colourPeriod));
 	CheckOpenCLError(err, __LINE__);
 
 	err = clEnqueueNDRangeKernel(render->queue, render->renderMandelbrotKernel, 1, NULL,

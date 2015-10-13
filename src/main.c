@@ -72,6 +72,7 @@ int main(void)
 	       "           - Left Click and Drag to pan.\n"
 	       "           - r to reset view.\n"
 	       "           - q,w to decrease, increase max iteration count\n"
+	       "           - a,s to decrease, increase colour period\n"
 	       "           - g to toggle Gaussian Blur after computation\n"
 	       "           - b to run some benchmarks.\n"
 	       "           - p to show a double-precision limited zoom.\n"
@@ -293,6 +294,26 @@ int main(void)
 			}
 			printf("Increasing max iteration count from %d to %d\n", image.maxIters, (int)(image.maxIters*ITERSFACTOR));
 			image.maxIters *= ITERSFACTOR;
+			RenderMandelbrot(&render, &image);
+		}
+
+
+		// if user presses "a", decrease colour period
+		else if (glfwGetKey(render.window, GLFW_KEY_A) == GLFW_PRESS) {
+			while (glfwGetKey(render.window, GLFW_KEY_A) != GLFW_RELEASE) {
+				glfwPollEvents();
+			}
+			printf("Decreasing colour period from %.0lf to %.0lf\n", image.colourPeriod, fmax(32, image.colourPeriod-32));
+			image.colourPeriod = fmax(32, image.colourPeriod-32);
+			RenderMandelbrot(&render, &image);
+		}
+		// if user presses "s", increase colour period
+		else if (glfwGetKey(render.window, GLFW_KEY_S) == GLFW_PRESS) {
+			while (glfwGetKey(render.window, GLFW_KEY_S) != GLFW_RELEASE) {
+				glfwPollEvents();
+			}
+			printf("Increasing colour period from %.0lf to %.0lf\n", image.colourPeriod, image.colourPeriod+32);
+			image.colourPeriod += 32;
 			RenderMandelbrot(&render, &image);
 		}
 
@@ -764,6 +785,9 @@ void SetInitialValues(imageStruct *image)
 
 	// Intermediate frames for SmoothZoom function
 	image->zoomSteps = INITIALZOOMSTEPS;
+
+	// Number of iterations in colour cycle
+	image->colourPeriod = DEFAULTCOLOURPERIOD;
 }
 
 

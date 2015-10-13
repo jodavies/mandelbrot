@@ -32,7 +32,7 @@
 #define DEFAULTGAUSSIANBLUR 1
 
 // Number of colour steps
-#define COLOURPERIOD 128
+#define DEFAULTCOLOURPERIOD 128
 
 // Test if point is inside cardioid or period-2 bulb, and if so, bail early
 #define EARLYBAIL 1

@@ -5,7 +5,7 @@
 
 __kernel void renderMandelbrotKernel(__global float * restrict pixels, const int xRes, const int yRes,
                                      const double xMin, const double xMax, const double yMin, const double yMax,
-                                     const int maxIters)
+                                     const int maxIters, const double colourPeriod)
 {
 	const int x = get_global_id(0)%xRes;
 	const int y = get_global_id(0)/xRes;
@@ -48,7 +48,7 @@ __kernel void renderMandelbrotKernel(__global float * restrict pixels, const int
 	}
 
 	else {
-		float smooth = fmod((iter -log(log(uSq+vSq)/log(2.0f))),COLOURPERIOD)/COLOURPERIOD;
+		float smooth = fmod((iter -log(log(uSq+vSq)/log(2.0f))),colourPeriod)/colourPeriod;
 
 		if (smooth < 0.25) {
 			r = 0.0;

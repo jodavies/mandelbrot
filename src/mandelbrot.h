@@ -34,7 +34,7 @@
 
 
 // Set pixels in r,g,b pointers based on final iteration value
-void SetPixelColour(const int iter, const int maxIters, float mag, float *r, float *g, float *b);
+void SetPixelColour(const int iter, const int maxIters, float mag, float *r, float *g, float *b, const double colourPeriod);
 
 
 // Basic routine, using CPU.
