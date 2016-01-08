@@ -19,7 +19,9 @@ Controls:
 
 
 
-Some performance numbers (fps):
+Some performance numbers (fps).
+
+CPU:
 
 Benchmark | i5-2500K | i5-2500K (AVX) | i7-5820K | i7-5820K (AVX) |
 ----------|---------:|---------------:|---------:|---------------:|
@@ -28,9 +30,12 @@ Early Bail-Out | 29.64 | - | 22.38 | -
 Spiral | 0.45 | 1.59 | 1.27 | 3.44
 Highly Zoomed | 0.15 | 0.48 | 0.45 | 1.09
 
-Benchmark | R9 280X GL+CL Interop | R9 280X CL | HD7730M GL+CL Interop | HD7730M | GTX960 CL
-----------|----------------------:|-----------:|----------------------:|--------:|---------:
-Whole fractal | 309.29 | 51.55 | 35.79 | 18.58 | 21.20
-Early Bail-Out | 250.38 | 50.63 | 13.47 | 9.90 | 15.86
-Spiral | 17.76 | 13.16 | 0.72 | 0.69 | 1.55
-Highly Zoomed | 3.80 | 3.34 | 0.15 | 0.15 | 0.35
+
+GPU with and without OpenGL+OpenCL Interop (IO)
+
+Benchmark | R9 280X GLCL IO | R9 280X CL | R7 260X GLCL IO | R7 260X CL | HD7730M GLCL IO | HD7730M | GTX960 CL
+----------|----------------------:|-----------:|----------------------:|-----------:|----------------------:|--------:|---------:
+Whole fractal | 309.29 | 51.55 | 50.30 | 32.60 | 35.79 | 18.58 | 21.20
+Early Bail-Out | 250.38 | 50.63 | 38.00 | 26.44 | 13.47 | 9.90 | 15.86
+Spiral | 17.76 | 13.16 | 2.75 | 2.62 | 0.72 | 0.69 | 1.55
+Highly Zoomed | 3.80 | 3.34 | 0.58 | 0.58 | 0.15 | 0.15 | 0.35
