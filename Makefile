@@ -1,6 +1,7 @@
 source = src/GaussianBlur.c src/GetWallTime.c src/main.c src/mandelbrot.c
 openclsource = src/CheckOpenCLError.c
-freeimage = -DWITHFREEIMAGE -lfreeimage
+#freeimage = -DWITHFREEIMAGE -lfreeimage
+freeimage =
 
 all:
 	mkdir -p bin

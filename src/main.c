@@ -376,6 +376,7 @@ int main(void)
 		}
 
 
+#ifdef WITHFREEIMAGE
 		// if user presses "h", render a high resolution version of the current view, and
 		// save it to disk as an image
 		else if (glfwGetKey(render.window, GLFW_KEY_H) == GLFW_PRESS) {
@@ -388,8 +389,9 @@ int main(void)
 			HighResolutionRender(&render, &image, RenderMandelbrot);
 			printf("   --- done. Total time: %lfs\n", GetWallTime()-startTime);
 		}
-	}
+#endif
 
+	}
 
 
 	// clean up
@@ -841,7 +843,11 @@ int InitialiseCLEnvironment(cl_platform_id **platform, cl_device_id ***device_id
 			clGetDeviceInfo((*device_id)[i][j], CL_DEVICE_NAME, sizeof(deviceName), deviceName, NULL);
 			printf("---OpenCL:    Device found %d. %s\n", j, deviceName);
 			clGetDeviceInfo((*device_id)[i][j], CL_DEVICE_EXTENSIONS, sizeof(deviceInfo), deviceInfo, NULL);
+#ifdef __APPLE__
+			if (strstr(deviceInfo, "cl_APPLE_gl_sharing") != NULL) {
+#else
 			if (strstr(deviceInfo, "cl_khr_gl_sharing") != NULL) {
+#endif
 				printf("---OpenCL:        cl_khr_gl_sharing supported!\n");
 				platformSupportsInterop[i] = 1;
 			}
@@ -872,11 +878,19 @@ int InitialiseCLEnvironment(cl_platform_id **platform, cl_device_id ***device_id
 		if (platformSupportsInterop[checkPlatform]) {
 			printf("---OpenCL: Looking for OpenGL Context device on platform %d ... ", checkPlatform);
 			clGetGLContextInfoKHR_fn pclGetGLContextInfoKHR = (clGetGLContextInfoKHR_fn) clGetExtensionFunctionAddressForPlatform((*platform)[checkPlatform], "clGetGLContextInfoKHR");
+#ifdef __APPLE__
+			CGLContextObj cglContext = CGLGetCurrentContext();
+			CGLShareGroupObj cglShareGroup = CGLGetShareGroup(cglContext);
+			cl_context_properties propserties[] = {
+				CL_CONTEXT_PROPERTY_USE_CGL_SHAREGROUP_APPLE, (cl_context_properties) cglShareGroup,
+				0};
+#else
 			cl_context_properties properties[] = {
 				CL_GL_CONTEXT_KHR, (cl_context_properties) glfwGetGLXContext(render->window),
 				CL_GLX_DISPLAY_KHR, (cl_context_properties) glfwGetX11Display(),
 				CL_CONTEXT_PLATFORM, (cl_context_properties) (*platform)[checkPlatform],
 				0};
+#endif
 			err = pclGetGLContextInfoKHR(properties, CL_CURRENT_DEVICE_FOR_GL_CONTEXT_KHR, sizeof(cl_device_id), &device, NULL);
 			if (err != CL_SUCCESS) {
 				printf("Not Found.\n");
