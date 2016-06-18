@@ -1,24 +1,45 @@
 source = src/GaussianBlur.c src/GetWallTime.c src/main.c src/mandelbrot.c
 openclsource = src/CheckOpenCLError.c
-freeimage = -DWITHFREEIMAGE -lfreeimage
-lglfw = -lglfw3
 
-all:
+CFLAGS += -std=gnu99 -pedantic -Wall
+CFLAGS += -O3 -g
+CFLAGS += -fno-unsafe-math-optimizations -fopenmp
+LDLIBS += -lrt -ldl -lm -lpthread
+
+LDLIBS += -lXinerama -lXcursor -lXrandr -lXi -lX11 -lXxf86vm
+LDLIBS += -lGL -lGLEW
+LDLIBS += -lglfw
+
+CPPFLAGS += -DWITHFREEIMAGE
+LDLIBS += -lfreeimage
+
+std: bin/mandelbrot
+gmp: bin/mandelbrot-gmp
+avx: bin/mandelbrot-avx
+opencl: bin/mandelbrot-cl
+
+bin/mandelbrot: $(source) | bin
+	$(CC) -o $@ $^ $(CPPFLAGS) $(CFLAGS) $(LDLIBS)
+
+bin/mandelbrot-gmp: LDLIBS += -lgmp
+bin/mandelbrot-gmp: CPPFLAGS += -DWITHGMP
+bin/mandelbrot-gmp: $(source) | bin
+	$(CC) -o $@ $^ $(CPPFLAGS) $(CFLAGS) $(LDLIBS)
+
+bin/mandelbrot-avx: CPPFLAGS += -DWITHAVX
+bin/mandelbrot-avx: CFLAGS += -march=core-avx-i
+bin/mandelbrot-avx: $(source) | bin
+	$(CC) -o $@ $^ $(CPPFLAGS) $(CFLAGS) $(LDLIBS)
+
+bin/mandelbrot-cl: CPPFLAGS += -DWITHOPENCL
+bin/mandelbrot-cl: LDLIBS += -lOpenCL
+bin/mandelbrot-cl: $(source) $(openclsource) | bin
+	$(CC) -o $@ $^ $(CPPFLAGS) $(CFLAGS) $(LDLIBS)
+
+bin:
 	mkdir -p bin
-	gcc -o bin/mandelbrot $(source) -std=gnu99 -O3 -fno-unsafe-math-optimizations -fopenmp -lrt $(lglfw) -ldl -lGL -lm -lXinerama -lXcursor -lXrandr -lXi -lX11 -lXxf86vm -lpthread -lGLEW $(freeimage) -Wall -pedantic -g
-
-gmp:
-	mkdir -p bin
-	gcc -o bin/mandelbrot -DWITHGMP $(source) -std=gnu99 -O3 -fno-unsafe-math-optimizations -fopenmp -lgmp -lrt $(lglfw) -ldl -lGL -lm -lXinerama -lXcursor -lXrandr -lXi -lX11 -lXxf86vm -lpthread -lGLEW $(freeimage) -Wall -pedantic -g
-
-avx:
-	mkdir -p bin
-	gcc -o bin/mandelbrot -DWITHAVX $(source) -std=gnu99 -O3 -march=core-avx-i -fno-unsafe-math-optimizations -fopenmp -lrt $(lglfw) -ldl -lGL -lm -lXinerama -lXcursor -lXrandr -lXi -lX11 -lXxf86vm -lpthread -lGLEW $(freeimage) -Wall -pedantic -g
-
-opencl:
-	mkdir -p bin
-	gcc -o bin/mandelbrot -DWITHOPENCL $(source) $(openclsource) -std=gnu99 -O3 -march=core-avx-i -fno-unsafe-math-optimizations -fopenmp -lrt $(lglfw) -ldl -lGL -lm -lXinerama -lXcursor -lXrandr -lXi -lX11 -lXxf86vm -lpthread -lGLEW -lOpenCL $(freeimage) -Wall -pedantic -g
-
 
 clean:
-	rm -r bin
+	rm -rf bin
+
+all: std gmp avx opencl
