@@ -284,7 +284,7 @@ int main(void)
 				glfwPollEvents();
 			}
 			printf("Decreasing max iteration count from %d to %d\n", image.maxIters, (int)(image.maxIters/ITERSFACTOR));
-			image.maxIters /= ITERSFACTOR;
+			image.maxIters = (int)((double)image.maxIters/ITERSFACTOR);
 			RenderMandelbrot(&render, &image);
 		}
 		// if user presses "w", increase max iteration count
@@ -293,7 +293,7 @@ int main(void)
 				glfwPollEvents();
 			}
 			printf("Increasing max iteration count from %d to %d\n", image.maxIters, (int)(image.maxIters*ITERSFACTOR));
-			image.maxIters *= ITERSFACTOR;
+			image.maxIters = (int)((double)image.maxIters*ITERSFACTOR);
 			RenderMandelbrot(&render, &image);
 		}
 
@@ -469,7 +469,8 @@ void SmoothZoom(renderStruct *render, imageStruct *image, RenderMandelbrotPtr Re
 		image->xMax = xMaxOld + (xMaxNew - xMaxOld)*t;
 		image->yMin = yMinOld + (yMinNew - yMinOld)*t;
 		image->yMax = yMaxOld + (yMaxNew - yMaxOld)*t;
-		image->maxIters = maxItersOld + (itersFactor-1.0)*maxItersOld*t;
+		assert( (double)maxItersOld+(itersFactor-1.0)*(double)maxItersOld*t < (double)INT_MAX );
+		image->maxIters = maxItersOld + (int)((itersFactor-1.0)*maxItersOld*t);
 
 		// Re-render mandelbrot set and draw
 		RenderMandelbrot(render, image);
@@ -505,8 +506,8 @@ void HighResolutionRender(renderStruct *render, imageStruct *image, RenderMandel
 	// Allocate new host pixels array of larger size. We need this regardless of interop
 	free(image->pixels);
 	// CAREFUL: these sizes can easily overflow a 32bit int. Use uint64_t
-	uint64_t allocSize = image->xRes * image->yRes * sizeof*(image->pixels) *3;
-	printf("   --- reallocating host pixels array: %.2lfMB\n", allocSize/1024.0/1024.0);
+	size_t allocSize = image->xRes * image->yRes * sizeof*(image->pixels) *3;
+	printf("   --- reallocating host pixels array: %.2lfMB\n", (double)allocSize/1024.0/1024.0);
 	image->pixels = malloc(allocSize);
 
 
@@ -520,15 +521,15 @@ void HighResolutionRender(renderStruct *render, imageStruct *image, RenderMandel
 	cl_int err;
 
 	// Determine the size (in bytes) of one row of pixels
-	uint64_t rowSize = image->xRes * sizeof *(image->pixels) * 3;
+	size_t rowSize = image->xRes * sizeof *(image->pixels) * 3;
 
 	// Determine how many rows we can fit in half the max allocation
-	uint64_t maxAllocRows = (render->deviceMaxAlloc/2) / rowSize;
+	size_t maxAllocRows = (render->deviceMaxAlloc/2) / rowSize;
 
 	// The number of tiles required to render the frame:
 	int tiles = (int)ceil((double)image->yRes/(double)maxAllocRows);
 	// Size of a single tile
-	uint64_t fullTileSize = maxAllocRows * rowSize;
+	size_t fullTileSize = maxAllocRows * rowSize;
 
 	// Allocate tile-sized global memory arrays on device.
 	// Store handle to OpenGL texture so it can be recovered later.
@@ -538,7 +539,7 @@ void HighResolutionRender(renderStruct *render, imageStruct *image, RenderMandel
 	err = clReleaseMemObject(render->pixelsDevice);
 	CheckOpenCLError(err, __LINE__);
 	// Allocate new arrays
-	printf("   --- allocating tile arrays on device: %lfMB\n", 2.0*fullTileSize/1024.0/1024.0);
+	printf("   --- allocating tile arrays on device: %lfMB\n", 2.0*(double)fullTileSize/1024.0/1024.0);
 	render->pixelsDevice = clCreateBuffer(render->contextCL, CL_MEM_READ_WRITE, fullTileSize, NULL, &err);
 	CheckOpenCLError(err, __LINE__);
 	render->pixelsTex = clCreateBuffer(render->contextCL, CL_MEM_READ_WRITE, fullTileSize, NULL, &err);
@@ -556,9 +557,9 @@ void HighResolutionRender(renderStruct *render, imageStruct *image, RenderMandel
 
 		// Set tile resolution. Each has maxAllocRows apart from the last,
 		// which might have fewer as it contains the remainder.
-		image->yRes = maxAllocRows;
+		image->yRes = (int)maxAllocRows;
 		if (t == tiles-1) {
-			image->yRes = yResFull % maxAllocRows;
+			image->yRes = yResFull % (int)maxAllocRows;
 		}
 		// Reset global size, as the resolution has changed
 		render->globalSize = image->yRes * image->xRes;
@@ -599,12 +600,12 @@ void HighResolutionRender(renderStruct *render, imageStruct *image, RenderMandel
 
 
 	// Save png
-	printf("   --- creating png...\n");
 	// Create raw pixel array
-	GLubyte * rawPixels;
-	uint64_t rawAllocSize = image->xRes * image->yRes * sizeof *rawPixels *3;
+	GLubyte *rawPixels;
+	size_t rawAllocSize = image->xRes * image->yRes * sizeof *rawPixels *3;
 	rawPixels = malloc(rawAllocSize);
-	for (uint64_t i = 0; i < image->xRes*image->yRes*3; i+=3) {
+	printf("   --- creating png. Raw data: %lfMB\n", (double)rawAllocSize/1024.0/1024.0);
+	for (int i = 0; i < image->xRes*image->yRes*3; i+=3) {
 		// note change in order, rgb -> bgr!
 		rawPixels[i+0] = (GLubyte)((image->pixels)[i+2]*255);
 		rawPixels[i+1] = (GLubyte)((image->pixels)[i+1]*255);
@@ -954,7 +955,7 @@ int InitialiseCLEnvironment(cl_platform_id **platform, cl_device_id ***device_id
 	// computation.
 	clGetDeviceInfo(device, CL_DEVICE_MAX_MEM_ALLOC_SIZE, sizeof(render->deviceMaxAlloc), &(render->deviceMaxAlloc), NULL);
 	printf("---OpenCL: Selected device has CL_DEVICE_MAX_MEM_ALLOC_SIZE: %lfMB\n",
-	       render->deviceMaxAlloc/1024.0/1024.0);
+	       (double)render->deviceMaxAlloc/1024.0/1024.0);
 
 	// create a command queue
 	render->queue = clCreateCommandQueue(render->contextCL, device, 0, &err);

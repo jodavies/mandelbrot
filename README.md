@@ -11,6 +11,7 @@ Controls:
 * Left Click and Drag to pan
 * r to reset view
 * q,w to decrease, increase max iteration count
+* a,s to decrease, increase colour period
 * g to toggle Gaussian Blur after computation
 * b to run some benchmarks
 * p to show a double-precision limited zoom

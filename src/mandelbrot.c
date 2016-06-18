@@ -1,13 +1,13 @@
 #include "mandelbrot.h"
 
 
-void SetPixelColour(const int iter, const int maxIters, float mag, float *r, float *g, float *b, const double colourPeriod)
+void SetPixelColour(const int iter, const int maxIters, const double mag, float *r, float *g, float *b, const double colourPeriod)
 {
 	// If pixel hit max iteration count, make it black
 	if (iter == maxIters) {
-		*r = 0.0;
-		*g = 0.0;
-		*b = 0.0;
+		*r = 0.0f;
+		*g = 0.0f;
+		*b = 0.0f;
 		return;
 	}
 	// For non-black pixels, define a smoothed iteration count using the final
@@ -18,27 +18,27 @@ void SetPixelColour(const int iter, const int maxIters, float mag, float *r, flo
 	// earlier than their iteration count suggests.
 	// Then compute its mod with a number of colour steps, so that it cycles
 	// through the gradient repeatedly, and scale it between 0 and 1.
-	float smooth = fmod((iter -log(log(mag)/log(2.0f))),colourPeriod)/colourPeriod;
+	float smooth = (float)(fmod(( (double)iter -log(log(mag)/log(2.0))), colourPeriod)/colourPeriod);
 
-	if (smooth < 0.25) {
-		*r = 0.0;
-		*g = 0.5*smooth*4.0;
-		*b = 1.0*smooth*4.0;
+	if (smooth < 0.25f) {
+		*r = 0.0f;
+		*g = 0.5f*smooth*4.0f;
+		*b = 1.0f*smooth*4.0f;
 	}
 	else if (smooth < 0.5) {
-		*r = 1.0*(smooth-0.25)*4.0;
-		*g = 0.5 + 0.5*(smooth-0.25)*4.0;
-		*b = 1.0;
+		*r = 1.0f*(smooth-0.25f)*4.0f;
+		*g = 0.5f + 0.5f*(smooth-0.25f)*4.0f;
+		*b = 1.0f;
 	}
 	else if (smooth < 0.75) {
-		*r = 1.0;
-		*g = 1.0 - 0.5*(smooth-0.5)*4.0;
-		*b = 1.0 - (smooth-0.5)*4.0;
+		*r = 1.0f;
+		*g = 1.0f - 0.5f*(smooth-0.5f)*4.0f;
+		*b = 1.0f - (smooth-0.5f)*4.0f;
 	}
 	else {
-		*r = (1.0-(smooth-0.75)*4.0);
-		*g = 0.5*(1.0-(smooth-0.75)*4.0);
-		*b = 0.0;
+		*r = (1.0f-(smooth-0.75f)*4.0f);
+		*g = 0.5f*(1.0f-(smooth-0.75f)*4.0f);
+		*b = 0.0f;
 	}
 
 }

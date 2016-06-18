@@ -1,5 +1,8 @@
 // OpenCL Kernel to render the mandelbrot set
 
+// For OpenCL 1.1 compatibility
+#pragma OPENCL EXTENSION cl_khr_fp64 : enable
+
 #include "config.h"
 
 
@@ -42,33 +45,33 @@ __kernel void renderMandelbrotKernel(__global float * restrict pixels, const int
 	float r,g,b;
 
 	if (iter == maxIters) {
-		r = 0.0;
-		g = 0.0;
-		b = 0.0;
+		r = 0.0f;
+		g = 0.0f;
+		b = 0.0f;
 	}
 
 	else {
-		float smooth = fmod((iter -log(log(uSq+vSq)/log(2.0f))),colourPeriod)/colourPeriod;
+		float smooth = (float)fmod((iter -log(log(uSq+vSq)/log(2.0))),colourPeriod)/colourPeriod;
 
-		if (smooth < 0.25) {
-			r = 0.0;
-			g = 0.5*smooth*4.0;
-			b = 1.0*smooth*4.0;
+		if (smooth < 0.25f) {
+			r = 0.0f;
+			g = 0.5f*smooth*4.0f;
+			b = 1.0f*smooth*4.0f;
 		}
-		else if (smooth < 0.5) {
-			r = 1.0*(smooth-0.25)*4.0;
-			g = 0.5 + 0.5*(smooth-0.25)*4.0;
-			b = 1.0;
+		else if (smooth < 0.5f) {
+			r = 1.0f*(smooth-0.25f)*4.0f;
+			g = 0.5f + 0.5f*(smooth-0.25f)*4.0f;
+			b = 1.0f;
 		}
-		else if (smooth < 0.75) {
-			r = 1.0;
-			g = 1.0 - 0.5*(smooth-0.5)*4.0;
-			b = 1.0 - (smooth-0.5)*4.0;
+		else if (smooth < 0.75f) {
+			r = 1.0f;
+			g = 1.0f - 0.5f*(smooth-0.5f)*4.0f;
+			b = 1.0f- (smooth-0.5f)*4.0f;
 		}
 		else {
-			r = (1.0-(smooth-0.75)*4.0);
-			g = 0.5*(1.0-(smooth-0.75)*4.0);
-			b = 0.0;
+			r = (1.0f-(smooth-0.75f)*4.0f);
+			g = 0.5f*(1.0f-(smooth-0.75f)*4.0f);
+			b = 0.0f;
 		}
 	}
 
@@ -98,25 +101,25 @@ __kernel void gaussianBlurKernel(__write_only image2d_t image, const int xRes, c
 		const int xl = (x == 0) ? x : x-1;
 		const int xr = (x == xRes-1) ? x : x+1;
 
-		r = (+1.0*pixels[yu*xRes*3 + x *3 + 0]
-			  +1.0*pixels[y *xRes*3 + xr*3 + 0]
-			  +4.0*pixels[y *xRes*3 + x *3 + 0]
-			  +1.0*pixels[y *xRes*3 + xl*3 + 0]
-			  +1.0*pixels[yd*xRes*3 + x *3 + 0])/8.0;
-		g = (+1.0*pixels[yu*xRes*3 + x *3 + 1]
-			  +1.0*pixels[y *xRes*3 + xr*3 + 1]
-			  +4.0*pixels[y *xRes*3 + x *3 + 1]
-			  +1.0*pixels[y *xRes*3 + xl*3 + 1]
-			  +1.0*pixels[yd*xRes*3 + x *3 + 1])/8.0;
-		b = (+1.0*pixels[yu*xRes*3 + x *3 + 2]
-			  +1.0*pixels[y *xRes*3 + xr*3 + 2]
-			  +4.0*pixels[y *xRes*3 + x *3 + 2]
-			  +1.0*pixels[y *xRes*3 + xl*3 + 2]
-			  +1.0*pixels[yd*xRes*3 + x *3 + 2])/8.0;
+		r = (+1.0f*pixels[yu*xRes*3 + x *3 + 0]
+			  +1.0f*pixels[y *xRes*3 + xr*3 + 0]
+			  +4.0f*pixels[y *xRes*3 + x *3 + 0]
+			  +1.0f*pixels[y *xRes*3 + xl*3 + 0]
+			  +1.0f*pixels[yd*xRes*3 + x *3 + 0])/8.0f;
+		g = (+1.0f*pixels[yu*xRes*3 + x *3 + 1]
+			  +1.0f*pixels[y *xRes*3 + xr*3 + 1]
+			  +4.0f*pixels[y *xRes*3 + x *3 + 1]
+			  +1.0f*pixels[y *xRes*3 + xl*3 + 1]
+			  +1.0f*pixels[yd*xRes*3 + x *3 + 1])/8.0f;
+		b = (+1.0f*pixels[yu*xRes*3 + x *3 + 2]
+			  +1.0f*pixels[y *xRes*3 + xr*3 + 2]
+			  +4.0f*pixels[y *xRes*3 + x *3 + 2]
+			  +1.0f*pixels[y *xRes*3 + xl*3 + 2]
+			  +1.0f*pixels[yd*xRes*3 + x *3 + 2])/8.0f;
 	}
 
 	int2 coord = {x,y};
-	float4 colour = {r,g,b,1.0};
+	float4 colour = {r,g,b,1.0f};
 	write_imagef(image, coord, colour);
 }
 
@@ -141,24 +144,25 @@ __kernel void gaussianBlurKernel2(__global float * restrict output, const int xR
 		const int xl = (x == 0) ? x : x-1;
 		const int xr = (x == xRes-1) ? x : x+1;
 
-		r = (+1.0*pixels[yu*xRes*3 + x *3 + 0]
-			  +1.0*pixels[y *xRes*3 + xr*3 + 0]
-			  +4.0*pixels[y *xRes*3 + x *3 + 0]
-			  +1.0*pixels[y *xRes*3 + xl*3 + 0]
-			  +1.0*pixels[yd*xRes*3 + x *3 + 0])/8.0;
-		g = (+1.0*pixels[yu*xRes*3 + x *3 + 1]
-			  +1.0*pixels[y *xRes*3 + xr*3 + 1]
-			  +4.0*pixels[y *xRes*3 + x *3 + 1]
-			  +1.0*pixels[y *xRes*3 + xl*3 + 1]
-			  +1.0*pixels[yd*xRes*3 + x *3 + 1])/8.0;
-		b = (+1.0*pixels[yu*xRes*3 + x *3 + 2]
-			  +1.0*pixels[y *xRes*3 + xr*3 + 2]
-			  +4.0*pixels[y *xRes*3 + x *3 + 2]
-			  +1.0*pixels[y *xRes*3 + xl*3 + 2]
-			  +1.0*pixels[yd*xRes*3 + x *3 + 2])/8.0;
+		r = (+1.0f*pixels[yu*xRes*3 + x *3 + 0]
+			  +1.0f*pixels[y *xRes*3 + xr*3 + 0]
+			  +4.0f*pixels[y *xRes*3 + x *3 + 0]
+			  +1.0f*pixels[y *xRes*3 + xl*3 + 0]
+			  +1.0f*pixels[yd*xRes*3 + x *3 + 0])/8.0f;
+		g = (+1.0f*pixels[yu*xRes*3 + x *3 + 1]
+			  +1.0f*pixels[y *xRes*3 + xr*3 + 1]
+			  +4.0f*pixels[y *xRes*3 + x *3 + 1]
+			  +1.0f*pixels[y *xRes*3 + xl*3 + 1]
+			  +1.0f*pixels[yd*xRes*3 + x *3 + 1])/8.0f;
+		b = (+1.0f*pixels[yu*xRes*3 + x *3 + 2]
+			  +1.0f*pixels[y *xRes*3 + xr*3 + 2]
+			  +4.0f*pixels[y *xRes*3 + x *3 + 2]
+			  +1.0f*pixels[y *xRes*3 + xl*3 + 2]
+			  +1.0f*pixels[yd*xRes*3 + x *3 + 2])/8.0f;
 	}
 
 	output[y*xRes*3 + x*3 + 0] = r;
 	output[y*xRes*3 + x*3 + 1] = g;
 	output[y*xRes*3 + x*3 + 2] = b;
 }
+

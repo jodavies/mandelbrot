@@ -7,7 +7,7 @@
 //#define FULLSCREEN 1
 
 // Resolution multiplier to use for high-resolution render, to save as bitmap
-#define HIGHRESOLUTIONMULTIPLIER 20
+#define HIGHRESOLUTIONMULTIPLIER 8
 
 
 // For smooth zoom in and out, the initial number of interpolated frames to render.
@@ -32,7 +32,7 @@
 #define DEFAULTGAUSSIANBLUR 1
 
 // Number of colour steps
-#define DEFAULTCOLOURPERIOD 128
+#define DEFAULTCOLOURPERIOD 128.0
 
 // Test if point is inside cardioid or period-2 bulb, and if so, bail early
 #define EARLYBAIL 1
