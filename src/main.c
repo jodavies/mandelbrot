@@ -19,6 +19,12 @@
 	#include <CL/opencl.h>
 	#include <CL/cl_gl.h>
 	#include "CheckOpenCLError.h"
+	/* ISO C forbids assignments between function pointers and void pointers,
+	 * but POSIX allows it. To compile without warnings even in -pedantic mode,
+	 * we use this horrible trick to get a function address from
+	 * clGetExtensionFunctionAddress
+	 */
+	#define PTR_FUNC_PTR *(void**)&
 #endif
 
 
@@ -825,7 +831,7 @@ int InitialiseCLEnvironment(cl_platform_id **platform, cl_device_id ***device_id
 	cl_uint *numDevices;
 	numDevices = malloc(numPlatforms * sizeof(cl_uint));
 
-	for (int i = 0; i < numPlatforms; i++) {
+	for (cl_uint i = 0; i < numPlatforms; i++) {
 		clGetPlatformInfo((*platform)[i], CL_PLATFORM_VENDOR, sizeof(infostring), infostring, NULL);
 		printf("\n---OpenCL: Platform Vendor %d: %s\n", i, infostring);
 
@@ -835,7 +841,7 @@ int InitialiseCLEnvironment(cl_platform_id **platform, cl_device_id ***device_id
 		platformSupportsInterop[i] = 0;
 		err = clGetDeviceIDs((*platform)[i], CL_DEVICE_TYPE_ALL, numDevices[i], (*device_id)[i], NULL);
 		CheckOpenCLError(err, __LINE__);
-		for (int j = 0; j < numDevices[i]; j++) {
+		for (cl_uint j = 0; j < numDevices[i]; j++) {
 			char deviceName[200];
 			clGetDeviceInfo((*device_id)[i][j], CL_DEVICE_NAME, sizeof(deviceName), deviceName, NULL);
 			printf("---OpenCL:    Device found %d. %s\n", j, deviceName);
@@ -864,13 +870,14 @@ int InitialiseCLEnvironment(cl_platform_id **platform, cl_device_id ***device_id
 	// OpenGL context. Loop through all platforms looking for the device:
 	cl_device_id device = NULL;
 	int deviceFound = 0;
-	int checkPlatform = 0;
+	cl_uint checkPlatform = 0;
 
 #ifdef TRYINTEROP
 	while (!deviceFound) {
 		if (platformSupportsInterop[checkPlatform]) {
 			printf("---OpenCL: Looking for OpenGL Context device on platform %d ... ", checkPlatform);
-			clGetGLContextInfoKHR_fn pclGetGLContextInfoKHR = (clGetGLContextInfoKHR_fn) clGetExtensionFunctionAddressForPlatform((*platform)[checkPlatform], "clGetGLContextInfoKHR");
+			clGetGLContextInfoKHR_fn pclGetGLContextInfoKHR;
+			PTR_FUNC_PTR pclGetGLContextInfoKHR = clGetExtensionFunctionAddressForPlatform((*platform)[checkPlatform], "clGetGLContextInfoKHR");
 			cl_context_properties properties[] = {
 				CL_GL_CONTEXT_KHR, (cl_context_properties) glfwGetGLXContext(render->window),
 				CL_GLX_DISPLAY_KHR, (cl_context_properties) glfwGetX11Display(),
@@ -920,29 +927,28 @@ int InitialiseCLEnvironment(cl_platform_id **platform, cl_device_id ***device_id
 	// In these cases, have the user choose a platform and device manually.
 	if (!(render->glclInterop)) {
 		printf("Choose a platform and device.\n");
-		checkPlatform = -1;
-		while (checkPlatform < 0) {
+		checkPlatform = numPlatforms;
+		while (checkPlatform >= numPlatforms) {
 			printf("Platform: ");
-			scanf("%d", &checkPlatform);
-			if (checkPlatform > numPlatforms-1) {
+			scanf("%u", &checkPlatform);
+			if (checkPlatform >= numPlatforms) {
 				printf("Invalid Platform choice.\n");
-				checkPlatform = -1;
 			}
 		}
 
-		int chooseDevice = -1;
-		while (chooseDevice < 0) {
+		cl_uint chooseDevice = numDevices[checkPlatform];
+		while (chooseDevice >= numDevices[checkPlatform]) {
 			printf("Device: ");
-			scanf("%d", &chooseDevice);
-			if (chooseDevice > numDevices[checkPlatform]) {
+			scanf("%u", &chooseDevice);
+			if (chooseDevice >= numDevices[checkPlatform]) {
 				printf("Invalid Device choice.\n");
-				chooseDevice = -1;
-			}
-			// Check the device we've chosen supports double precision
-			clGetDeviceInfo((*device_id)[checkPlatform][chooseDevice], CL_DEVICE_EXTENSIONS, sizeof(deviceInfo), deviceInfo, NULL);
-			if (strstr(deviceInfo, "cl_khr_fp64") == NULL) {
-				printf("---OpenCL: Interop device doesn't support double precision! We cannot use it.\n");
-				chooseDevice = -1;
+			} else {
+				// Check the device we've chosen supports double precision
+				clGetDeviceInfo((*device_id)[checkPlatform][chooseDevice], CL_DEVICE_EXTENSIONS, sizeof(deviceInfo), deviceInfo, NULL);
+				if (strstr(deviceInfo, "cl_khr_fp64") == NULL) {
+					printf("---OpenCL: Interop device doesn't support double precision! We cannot use it.\n");
+					chooseDevice = numDevices[checkPlatform];
+				}
 			}
 		}
 
@@ -1011,7 +1017,7 @@ void CleanUpCLEnvironment(cl_platform_id **platform, cl_device_id ***device_id, 
 
 	cl_uint numPlatforms;
 	clGetPlatformIDs(0, NULL, &numPlatforms);
-	for (int i = 0; i < numPlatforms; i++) {
+	for (cl_uint i = 0; i < numPlatforms; i++) {
 		free((*device_id)[i]);
 	}
 	free(*platform);

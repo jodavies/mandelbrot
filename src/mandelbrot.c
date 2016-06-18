@@ -55,10 +55,10 @@ void RenderMandelbrotCPU(renderStruct *render, imageStruct *image)
 
 	// For each pixel, iterate and store the iteration number when |z|>2 or maxIters
 	#pragma omp parallel for default(none) shared(image) schedule(dynamic)
-	for (int y = 0; y < image->yRes; y++) {
-		for (int x = 0; x < image->xRes; x++) {
+	for (unsigned y = 0; y < image->yRes; y++) {
+		for (unsigned x = 0; x < image->xRes; x++) {
 
-			int iter = 0;
+			unsigned iter = 0;
 			double u = 0.0, v = 0.0, uNew, vNew;
 			double uSq = 0.0;
 			double vSq = 0.0;
@@ -130,7 +130,7 @@ void RenderMandelbrotGMPCPU(renderStruct *render, imageStruct *image)
 
 	// For each pixel, iterate and store the iteration number when |z|>2 or maxIters
 	#pragma omp parallel for default(none) shared(image,mtwo,mfour,mxMin,mxMax,myMin,myMax,mxRes,myRes) schedule(dynamic)
-	for (int y = 0; y < image->yRes; y++) {
+	for (unsigned y = 0; y < image->yRes; y++) {
 
 		// x loop invariant
 		mpf_t myPix;
@@ -157,9 +157,9 @@ void RenderMandelbrotGMPCPU(renderStruct *render, imageStruct *image)
 		mpf_init(mytmp2);
 
 
-		for (int x = 0; x < image->xRes; x++) {
+		for (unsigned x = 0; x < image->xRes; x++) {
 
-			int iter = 0;
+			unsigned iter = 0;
 
 			// set mu and mv to zero initially
 			unsigned long zero = 0;
@@ -274,8 +274,8 @@ void RenderMandelbrotAVXCPU(renderStruct *render, imageStruct *image)
 
 	// For each pixel, iterate and store the iteration number when |z|>2 or maxIters
 	#pragma omp parallel for default(none) shared(image) schedule(dynamic)
-	for (int y = 0; y < image->yRes; y++) {
-		for (int x = 0; x < image->xRes; x+=4) {
+	for (unsigned y = 0; y < image->yRes; y++) {
+		for (unsigned x = 0; x < image->xRes; x+=4) {
 
 			const __m256d vxPix = _mm256_div_pd(_mm256_set_pd(x+3,x+2,x+1,x+0), vxRes);
 			const __m256d vyPix = _mm256_div_pd(_mm256_set1_pd(y), vyRes);
@@ -293,7 +293,7 @@ void RenderMandelbrotAVXCPU(renderStruct *render, imageStruct *image)
 			}*/
 
 
-			int iter = 0;
+			unsigned iter = 0;
 			__m256d viter = _mm256_set1_pd(0.0);
 			__m256d vu = _mm256_set1_pd(0.0);
 			__m256d vv = _mm256_set1_pd(0.0);

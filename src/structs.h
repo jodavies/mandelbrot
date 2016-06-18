@@ -4,15 +4,15 @@
 
 // This struct holds image parameters/variables
 typedef struct {
-	int xRes;			// x axis (horiz.) resolution
-	int yRes;			// y axis (vert.) resolution
+	unsigned xRes;			// x axis (horiz.) resolution
+	unsigned yRes;			// y axis (vert.) resolution
 
 	double xMin;		// lower and upper image boundaries,
 	double xMax;		// in "fractal coordinates", ie, the
 	double yMin;		// complex plane.
 	double yMax;
 
-	int maxIters;		// max iteration count before a pixel
+	unsigned maxIters;		// max iteration count before a pixel
 							// is considered converged. Changes with zoom.
 
 	float * pixels;	// array of r,g,b colour values in [0.0,1.0].
