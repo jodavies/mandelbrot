@@ -19,6 +19,12 @@
 	#include <CL/opencl.h>
 	#include <CL/cl_gl.h>
 	#include "CheckOpenCLError.h"
+	/* ISO C forbids assignments between function pointers and void pointers,
+	 * but POSIX allows it. To compile without warnings even in -pedantic mode,
+	 * we use this horrible trick to get a function address from
+	 * clGetExtensionFunctionAddress
+	 */
+	#define PTR_FUNC_PTR *(void**)&
 #endif
 
 
@@ -870,7 +876,8 @@ int InitialiseCLEnvironment(cl_platform_id **platform, cl_device_id ***device_id
 	while (!deviceFound) {
 		if (platformSupportsInterop[checkPlatform]) {
 			printf("---OpenCL: Looking for OpenGL Context device on platform %d ... ", checkPlatform);
-			clGetGLContextInfoKHR_fn pclGetGLContextInfoKHR = (clGetGLContextInfoKHR_fn) clGetExtensionFunctionAddressForPlatform((*platform)[checkPlatform], "clGetGLContextInfoKHR");
+			clGetGLContextInfoKHR_fn pclGetGLContextInfoKHR;
+			PTR_FUNC_PTR pclGetGLContextInfoKHR = clGetExtensionFunctionAddressForPlatform((*platform)[checkPlatform], "clGetGLContextInfoKHR");
 			cl_context_properties properties[] = {
 				CL_GL_CONTEXT_KHR, (cl_context_properties) glfwGetGLXContext(render->window),
 				CL_GLX_DISPLAY_KHR, (cl_context_properties) glfwGetX11Display(),
