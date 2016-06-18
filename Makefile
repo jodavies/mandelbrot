@@ -1,9 +1,12 @@
 source = src/GaussianBlur.c src/GetWallTime.c src/main.c src/mandelbrot.c
 openclsource = src/CheckOpenCLError.c
 
-CFLAGS += -std=gnu99 -pedantic -Wall
+CFLAGS += -std=c99 -pedantic -Wall
 CFLAGS += -O3 -g
 CFLAGS += -fno-unsafe-math-optimizations -fopenmp
+
+CPPFLAGS += -D_POSIX_C_SOURCE=200112L
+
 LDLIBS += -lrt -ldl -lm -lpthread
 
 LDLIBS += -lXinerama -lXcursor -lXrandr -lXi -lX11 -lXxf86vm
