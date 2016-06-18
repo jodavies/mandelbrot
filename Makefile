@@ -1,7 +1,7 @@
 source = src/GaussianBlur.c src/GetWallTime.c src/main.c src/mandelbrot.c
 openclsource = src/CheckOpenCLError.c
 
-CFLAGS += -std=c99 -pedantic -Wall
+CFLAGS += -std=c99 -pedantic -Wall -Wextra
 CFLAGS += -O3 -g
 CFLAGS += -fno-unsafe-math-optimizations -fopenmp
 
