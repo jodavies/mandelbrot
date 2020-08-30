@@ -273,7 +273,7 @@ void RenderMandelbrotAVXCPU(renderStruct *render, imageStruct *image)
 	const __m256d vyRes = _mm256_set1_pd((double)image->yRes);
 
 	// For each pixel, iterate and store the iteration number when |z|>2 or maxIters
-	#pragma omp parallel for default(none) shared(image) schedule(dynamic)
+	#pragma omp parallel for default(none) shared(image) firstprivate(vxMin,vxMax,vyMin,vyMax,vxRes,vyRes) schedule(dynamic)
 	for (unsigned y = 0; y < image->yRes; y++) {
 		for (unsigned x = 0; x < image->xRes; x+=4) {
 
